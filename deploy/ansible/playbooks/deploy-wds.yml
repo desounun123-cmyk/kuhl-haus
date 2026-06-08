@@ -1,0 +1,235 @@
+- name: Deploy Widget Data Service
+  hosts: all
+  gather_facts: true
+  become: true
+  become_user: stack
+
+  tasks:
+    - name: Set runtime facts for Python interpreter
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: /opt/ansible/venv/bin/python
+        ansible_python_venv_dir: /opt/ansible/venv
+
+    # WDS Server Secrets
+    - name: Create Widget Data Service secrets
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: '{{ wds_server_secret_name }}'
+            namespace: '{{ data_plane_namespace }}'
+          stringData:
+            # REDIS_URL: "redis://:{{ redis_password }}@mdp-redis.{{ data_plane_namespace }}.svc.cluster.local:{{ redis_port }}/0"
+            REDIS_URL: redis://mdp-redis.{{ data_plane_namespace }}.svc.cluster.local:{{ redis_port }}/0
+            REDIS_PASSWORD: '{{ redis_password }}'
+            AUTH_API_KEY: '{{ wds_server_auth_api_key }}'
+            OTEL_EXPORTER_OTLP_ENDPOINT: "{{ otel_exporter_otlp_endpoint }}"
+            OTEL_EXPORTER_OTLP_HEADERS: "{{ otel_exporter_otlp_headers }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      no_log: true
+
+    # WDS Server Deployment
+    - name: Create Widget Data Service Deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: '{{ wds_server_name }}'
+            namespace: '{{ data_plane_namespace }}'
+          spec:
+            replicas: '{{ wds_server_replicas }}'
+            selector:
+              matchLabels:
+                app: '{{ wds_server_name }}'
+            strategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxSurge: 1
+                maxUnavailable: 0
+            template:
+              metadata:
+                labels:
+                  app: '{{ wds_server_name }}'
+              spec:
+                containers:
+                  - name: '{{ wds_server_name }}'
+                    image: '{{ wds_server_image }}'
+                    imagePullPolicy: '{{ image_pull_policy }}'
+                    ports:
+                      - containerPort: '{{ wds_server_container_port }}'
+                        name: http
+                    livenessProbe:
+                      httpGet:
+                        path: /health
+                        port: '{{ wds_server_container_port }}'
+                      initialDelaySeconds: 30
+                      periodSeconds: 15
+                      timeoutSeconds: 5
+                      successThreshold: 1
+                      failureThreshold: 3
+                    readinessProbe:
+                      httpGet:
+                        path: /health
+                        port: '{{ wds_server_container_port }}'
+                      initialDelaySeconds: 30
+                      periodSeconds: 15
+                      timeoutSeconds: 10
+                      successThreshold: 1
+                      failureThreshold: 20
+                    envFrom:
+                      - secretRef:
+                          name: '{{ wds_server_secret_name }}'
+                    env:
+                      - name: LOG_LEVEL
+                        value: '{{ wds_server_log_level }}'
+                      - name: CONTAINER_IMAGE
+                        value: '{{ wds_server_image }}'
+                      - name: IMAGE_VERSION
+                        value: '{{ app_container_image_version }}'
+                      - name: TZ
+                        value: '{{ container_timezone }}'
+                      - name: WDS_SERVER_DOMAIN
+                        value: '{{ wds_server_domain }}'
+                      - name: AUTH_ENABLED
+                        value: '{{ wds_server_auth_enabled | string }}'
+                      - name: POD_NAME
+                        valueFrom:
+                          fieldRef:
+                            fieldPath: metadata.name
+                      - name: OTEL_SERVICE_NAME
+                        value: "wds"
+                      - name: OTEL_TRACES_EXPORTER
+                        value: "{{ otel_traces_exporter }}"
+                      - name: OTEL_METRICS_EXPORTER
+                        value: "{{ otel_metrics_exporter }}"
+                      - name: OTEL_LOGS_EXPORTER
+                        value: "{{ otel_logs_exporter }}"
+                      - name: OTEL_LOG_LEVEL
+                        value: "{{ otel_log_level }}"
+                      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+                        value: "{{ otel_exporter_otlp_protocol}}"
+                    resources:
+                      requests:
+                        cpu: '{{ wds_server_cpu_min | default(''250m'') }}'
+                        memory: '{{ wds_server_memory_min | default(''256Mi'') }}'
+                      limits:
+                        cpu: '{{ wds_server_cpu_max | default(''1000m'') }}'
+                        memory: '{{ wds_server_memory_max | default(''1Gi'') }}'
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # WDS Server Service
+    - name: Create Widget Data Service service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: '{{ wds_server_name }}'
+            namespace: '{{ data_plane_namespace }}'
+          spec:
+            type: ClusterIP
+            ports:
+              - port: '{{ wds_server_container_port }}'
+                targetPort: '{{ wds_server_container_port }}'
+                protocol: TCP
+                name: http
+            selector:
+              app: '{{ wds_server_name }}'
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # WDS Server Ingress
+    - name: Create Widget Data Service Ingress
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: '{{ wds_server_name }}'
+            namespace: '{{ data_plane_namespace }}'
+            annotations:
+              cert-manager.io/issuer: '{{ wds_server_cert_issuer }}'
+              nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+          spec:
+            ingressClassName: '{{ wds_server_ingress_class }}'
+            tls:
+              - hosts:
+                  - '{{ wds_server_domain }}'
+                secretName: '{{ wds_server_name }}-tls'
+            rules:
+              - host: '{{ wds_server_domain }}'
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: '{{ wds_server_name }}'
+                          port:
+                            number: '{{ wds_server_container_port }}'
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Wait for WDS to be ready
+    - name: Wait for Widget Data Service to be ready
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: '{{ data_plane_namespace }}'
+        label_selectors:
+          - app={{ wds_server_name }}
+        wait: 'yes'
+        wait_condition:
+          type: Ready
+          status: 'True'
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: wds_pods
+
+    # Verify certificate issuance
+    - name: Wait for TLS certificate to be issued
+      kubernetes.core.k8s_info:
+        kind: Certificate
+        name: '{{ wds_server_name }}-tls'
+        namespace: '{{ data_plane_namespace }}'
+        wait: 'yes'
+        wait_condition:
+          type: Ready
+          status: 'True'
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: cert_status
+      retries: 3
+      delay: 30
+      until: cert_status is succeeded
+
+    # Display deployment summary
+    - name: Display deployment summary
+      debug:
+        msg:
+          - '=== Widget Data Service Deployment Complete ==='
+          - 'Service: {{ wds_server_name }}'
+          - 'Namespace: {{ data_plane_namespace }}'
+          - 'Pod: {{ wds_pods.resources[0].metadata.name if wds_pods.resources
+            else ''N/A'' }}'
+          - 'API Endpoint: https://{{ wds_server_domain }}'
+          - ''
+          - 'Dependencies:'
+          - '  - Redis: mdp-redis.{{ data_plane_namespace
+            }}.svc.cluster.local:{{ redis_port }}'
+          - ''
+          - 'Verify with:'
+          - '  kubectl get pods -n {{ data_plane_namespace }} -l app={{
+            wds_server_name }}'
+          - '  kubectl logs -n {{ data_plane_namespace }} -l app={{
+            wds_server_name }}'
+          - '  curl https://{{ wds_server_domain }}/health'

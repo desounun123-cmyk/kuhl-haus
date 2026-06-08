@@ -1,0 +1,330 @@
+---
+- name: Deploy Market Data Cache (Redis)
+  hosts: all
+  gather_facts: true
+  become: true
+  become_user: stack
+
+  tasks:
+    - name: Set runtime facts for Python interpreter
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: /opt/ansible/venv/bin/python
+        ansible_python_venv_dir: /opt/ansible/venv
+
+    # Redis Password Secret
+    - name: Create Redis password secret
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: mdp-redis-secret
+            namespace: "{{ data_plane_namespace }}"
+          stringData:
+            REDIS_PASSWORD: "{{ redis_password }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      no_log: true
+
+    # Redis Configuration (WITHOUT password)
+    - name: Create Redis configuration ConfigMap
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: mdp-redis-config
+            namespace: "{{ data_plane_namespace }}"
+          data:
+            redis-stack.conf: |
+              # https://redis.io/docs/latest/operate/oss_and_stack/management/config-file/
+              # Network
+              bind 0.0.0.0
+              port {{ redis_port }}
+
+              # General
+              daemonize no
+              supervised no
+              loglevel notice
+
+              # Persistence - both AOF and RDB
+              save 900 1
+              save 300 10
+              save 60 10000
+
+              appendonly yes
+              appendfsync everysec
+              auto-aof-rewrite-percentage 100
+              auto-aof-rewrite-min-size 64mb
+
+              # Memory Management
+              maxmemory-policy volatile-lru
+
+              # Security
+              requirepass ${REDIS_PASSWORD}
+
+              # Data Directory
+              dir /data
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Redis Headless Service
+    - name: Create Redis headless service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: mdp-redis-headless
+            namespace: "{{ data_plane_namespace }}"
+            labels:
+              app: mdp-redis
+          spec:
+            clusterIP: None
+            selector:
+              app: mdp-redis
+            ports:
+              - name: redis
+                port: "{{ redis_port }}"
+                targetPort: "{{ redis_port }}"
+              - name: redisinsight
+                port: "{{ redis_insight_port }}"
+                targetPort: "{{ redis_insight_port }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Redis ClusterIP Service
+    - name: Create Redis service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: mdp-redis
+            namespace: "{{ data_plane_namespace }}"
+            labels:
+              app: mdp-redis
+          spec:
+            type: ClusterIP
+            selector:
+              app: mdp-redis
+            ports:
+              - name: redis
+                port: "{{ redis_port }}"
+                targetPort: "{{ redis_port }}"
+              - name: redisinsight
+                port: "{{ redis_insight_port }}"
+                targetPort: "{{ redis_insight_port }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Redis StatefulSet
+    - name: Create Redis StatefulSet
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            name: mdp-redis
+            namespace: "{{ data_plane_namespace }}"
+            labels:
+              app: mdp-redis
+          spec:
+            serviceName: mdp-redis-headless
+            replicas: 1
+            selector:
+              matchLabels:
+                app: mdp-redis
+            template:
+              metadata:
+                labels:
+                  app: mdp-redis
+              spec:
+                containers:
+                  - name: redis
+                    image: "{{ redis_image }}"
+                    # command:
+                    #   - redis-stack-server  # By default, redis-stack starts both Redis and RedisInsight; use redis-stack-server to start Redis only
+                    # args:
+                    #   - /opt/redis-stack/redis-stack.conf
+                    #   - --requirepass
+                    #   - $(REDIS_PASSWORD)
+                    ports:
+                      - containerPort: "{{ redis_port }}"
+                        name: redis
+                      - containerPort: "{{ redis_insight_port }}"
+                        name: redisinsight
+                    env:
+                      - name: REDIS_PASSWORD
+                        valueFrom:
+                          secretKeyRef:
+                            name: mdp-redis-secret
+                            key: REDIS_PASSWORD
+                      # - name: REDIS_ARGS
+                      #   value: "--requirepass $(REDIS_PASSWORD)"
+
+                      # RedisInsight preconfiguration
+                      - name: REDISINSIGHT_HOST
+                        value: "0.0.0.0"
+                      - name: REDISINSIGHT_PORT
+                        value: "8001"
+                      - name: REDISINSIGHT_DB_0_NAME
+                        value: "MDP Redis"
+                      - name: REDISINSIGHT_DB_0_HOST
+                        value: "mdp-redis.{{ data_plane_namespace }}.svc.cluster.local"
+                      - name: REDISINSIGHT_DB_0_PORT
+                        value: "6379"
+                      - name: REDISINSIGHT_DB_0_USERNAME
+                        value: "default"
+                      - name: REDISINSIGHT_DB_0_PASSWORD
+                        value: "$(REDIS_PASSWORD)"
+                    resources:
+                      limits:
+                        cpu: "{{ redis_cpu_max }}"
+                        memory: "{{ redis_memory_max }}"
+                      requests:
+                        cpu: "{{ redis_cpu_min }}"
+                        memory: "{{ redis_memory_min }}"
+                    volumeMounts:
+                      - name: redis-data
+                        mountPath: /data
+                      - name: redis-config
+                        mountPath: /opt/redis-stack/redis-stack.conf
+                        subPath: redis-stack.conf
+                    # readinessProbe:
+                    #   exec:
+                    #     command:
+                    #       - sh
+                    #       - -c
+                    #       - redis-cli -a "$REDIS_PASSWORD" ping | grep -q PONG
+                    #   initialDelaySeconds: 15
+                    #   periodSeconds: 5
+                    #   timeoutSeconds: 3
+                    #   successThreshold: 1
+                    #   failureThreshold: 3
+                    # livenessProbe:
+                    #   exec:
+                    #     command:
+                    #       - sh
+                    #       - -c
+                    #       - redis-cli -a "$REDIS_PASSWORD" ping | grep -q PONG
+                    #   initialDelaySeconds: 30
+                    #   periodSeconds: 10
+                    #   timeoutSeconds: 3
+                    #   successThreshold: 1
+                    #   failureThreshold: 3
+                volumes:
+                  - name: redis-config
+                    configMap:
+                      name: mdp-redis-config
+            volumeClaimTemplates:
+              - metadata:
+                  name: redis-data
+                spec:
+                  accessModes: ["ReadWriteOnce"]
+                  storageClassName: "{{ app_storage_class }}"
+                  resources:
+                    requests:
+                      storage: "{{ redis_storage_size | default('20Gi') }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Redis Ingress
+    - name: Create Redis Ingress for RedisInsight
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: mdp-redis
+            namespace: "{{ data_plane_namespace }}"
+            annotations:
+              cert-manager.io/issuer: "{{ app_cert_issuer }}"
+              nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          spec:
+            ingressClassName: "{{ app_ingress_class }}"
+            tls:
+              - hosts:
+                  - "{{ mdc_server_domain }}"
+                secretName: mdp-redis-tls
+            rules:
+              - host: "{{ mdc_server_domain }}"
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: mdp-redis
+                          port:
+                            number: "{{ redis_insight_port }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Wait for Redis to be ready
+    - name: Wait for Redis StatefulSet to be ready
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ data_plane_namespace }}"
+        label_selectors:
+          - app=mdp-redis
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Verify Redis connectivity
+    - name: Test Redis connectivity
+      kubernetes.core.k8s_exec:
+        namespace: "{{ data_plane_namespace }}"
+        pod: mdp-redis-0
+        command: sh -c 'redis-cli ping'
+        # command: sh -c 'redis-cli -a "$REDIS_PASSWORD" ping'
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: redis_ping
+      failed_when: "'PONG' not in redis_ping.stdout"
+      retries: 3
+      delay: 5
+      until: redis_ping is succeeded
+
+    # Verify certificate issuance
+    - name: Wait for TLS certificate to be issued
+      kubernetes.core.k8s_info:
+        kind: Certificate
+        name: mdp-redis-tls
+        namespace: "{{ data_plane_namespace }}"
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: cert_status
+      retries: 3
+      delay: 30
+      until: cert_status is succeeded
+
+    # Display deployment summary
+    - name: Display deployment summary
+      debug:
+        msg:
+          - "=== Redis Deployment Complete ==="
+          - "Service: mdp-redis"
+          - "Namespace: {{ data_plane_namespace }}"
+          - "Redis Endpoint: mdp-redis.{{ data_plane_namespace }}.svc.cluster.local:{{ redis_port }}"
+          - "RedisInsight UI: https://{{ mdc_server_domain }}"
+          - ""
+          - "Verify with:"
+          - "  kubectl get pods -n {{ data_plane_namespace }} -l app=mdp-redis"
+          - "  kubectl exec -n {{ data_plane_namespace }} mdp-redis-0 -- redis-cli -a '$REDIS_PASSWORD' ping"

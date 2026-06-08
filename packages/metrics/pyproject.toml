@@ -1,0 +1,88 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "kuhl-haus-metrics"
+version = "0.2.23"
+description = "Application logging and instrumentation"
+authors = [
+    { name = "Tom Pounders", email = "git@oldschool.engineer" },
+]
+readme = "README.md"
+requires-python = ">=3.12"
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python"
+]
+dependencies = [
+    "fastapi",
+    "importlib_metadata",
+    "dataclasses-json",
+    "importlib-metadata",
+]
+
+# dynamic = ["version"]
+
+license = {file = "LICENSE.txt"}
+
+[project.urls]
+Homepage = "https://github.com/kuhl-haus"
+Documentation = "https://github.com/kuhl-haus/kuhl-haus-metrics/wiki"
+Source = "https://github.com/kuhl-haus/kuhl-haus-metrics.git"
+Changelog = "https://github.com/kuhl-haus/kuhl-haus-metrics/commits"
+Tracker = "https://github.com/kuhl-haus/kuhl-haus-metrics/issues"
+
+[project.optional-dependencies]
+testing = [
+    "setuptools",
+    "pdm-backend",
+    "pytest",
+    "pytest-cov",
+    "pytest-asyncio",
+    "httpx",
+    "starlette"
+]
+
+# [project.scripts]
+# script-name = "kuhl_haus.metrics.module:function"
+# fibonacci = "kuhl_haus.metrics.skeleton:run"
+
+[tool.setuptools]
+zip-safe = true
+include-package-data = true
+package-dir = {"" = "src"}
+packages = {find = {where = ["src"], exclude = ["tests"]}}
+
+# [tool.setuptools_scm]
+# For smarter version schemes and other configuration options,
+# check out https://github.com/pypa/setuptools_scm
+# version_scheme = "no-guess-dev"
+
+[tool.pytest.ini_options]
+addopts = ["--verbose"]
+norecursedirs = ["dist", "build", ".tox"]
+testpaths = ["tests"]
+
+[tool.devpi.upload]
+no_vcs = 1
+formats = ["bdist_wheel"]
+
+[tool.flake8]
+max_line_length = 88
+extend_ignore = ["E203", "W503"]
+exclude = [".tox", "build", "dist", ".eggs", "docs/conf.py"]
+
+[tool.pyscaffold]
+version = "4.6"
+package = "metrics"
+extensions = ["namespace"]
+namespace = "kuhl_haus"
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.build]
+package-dir = "src"
+includes = ["src/kuhl_haus"]

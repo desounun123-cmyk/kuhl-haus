@@ -1,0 +1,579 @@
+import asyncio
+import logging
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from massive.websocket import Feed, Market
+from massive.rest.models import MarketStatus
+
+from kuhl_haus.mdp.components.massive_data_listener import MassiveDataListener
+from kuhl_haus.mdp.enum.market_status_value import MarketStatusValue
+
+
+@pytest.fixture
+def mock_message_handler():
+    return AsyncMock()
+
+
+@pytest.fixture
+def mock_rest_client():
+    with patch(
+        "kuhl_haus.mdp.components.massive_data_listener.RESTClient"
+    ) as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_ws_client():
+    with patch(
+        "kuhl_haus.mdp.components.massive_data_listener.WebSocketClient"
+    ) as mock:
+        # Configure the instance to have async methods
+        instance = mock.return_value
+        instance.connect = AsyncMock()
+        instance.close = AsyncMock()
+        instance.unsubscribe_all = MagicMock()
+        yield mock
+
+
+@pytest.fixture
+def sut(mock_message_handler, mock_rest_client):
+    return MassiveDataListener(
+        message_handler=mock_message_handler,
+        api_key="test_api_key",
+        feed=Feed.RealTime,
+        market=Market.Stocks,
+        subscriptions=["T.AAPL", "T.MSFT"],
+        raw=False,
+        verbose=True,
+        max_reconnects=3,
+        secure=True,
+        extra_param="extra_value"
+    )
+
+
+def test_mdl_init_with_valid_params_expect_correct_init(
+    mock_message_handler
+):
+    # Arrange
+    api_key = "test_api_key"
+    feed = Feed.RealTime
+    market = Market.Stocks
+    subscriptions = ["T.AAPL"]
+
+    # Act
+    sut = MassiveDataListener(
+        message_handler=mock_message_handler,
+        api_key=api_key,
+        feed=feed,
+        market=market,
+        subscriptions=subscriptions
+    )
+
+    # Assert
+    assert sut.api_key == api_key
+    assert sut.feed == feed
+    assert sut.market == market
+    assert sut.subscriptions == subscriptions
+    assert sut.connection_status == {
+        "connected": False,
+        "feed": feed,
+        "healthy": False,
+        "market": market,
+        "reconnects": 0,
+        "subscriptions": subscriptions,
+    }
+
+
+@pytest.mark.asyncio
+async def test_mdl_start_with_valid_params_expect_ws_client_started(
+    sut, mock_ws_client
+):
+    # Arrange
+    with patch("asyncio.create_task") as mock_create_task:
+        # Act
+        await sut.start()
+
+        # Assert
+        mock_ws_client.assert_called_once_with(
+            api_key=sut.api_key,
+            feed=sut.feed,
+            market=sut.market,
+            raw=sut.raw,
+            verbose=sut.verbose,
+            subscriptions=sut.subscriptions,
+            max_reconnects=sut.max_reconnects,
+            secure=sut.secure,
+            **sut.kwargs
+        )
+        mock_create_task.assert_called_once()
+        assert sut.ws_connection == mock_ws_client.return_value
+        assert sut.ws_coroutine == mock_create_task.return_value
+
+
+@pytest.mark.asyncio
+async def test_mdl_start_with_exception_expect_error_logged_and_stopped(
+    sut, mock_ws_client
+):
+    # Arrange
+    mock_ws_client.side_effect = Exception("Test Error")
+    with patch.object(sut, "stop", new_callable=AsyncMock) as mock_stop:
+        # Act
+        await sut.start()
+
+        # Assert
+        mock_stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdl_stop_with_active_conn_expect_ws_client_stopped(
+    sut, mock_ws_client
+):
+    # Arrange
+    sut.ws_connection = mock_ws_client.return_value
+    mock_ws_coroutine = MagicMock(spec=asyncio.Task)
+    sut.ws_coroutine = mock_ws_coroutine
+    sut.connection_status["connected"] = True
+
+    # Act
+    # Save the connection because stop sets it to None
+    ws_connection = sut.ws_connection
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        await sut.stop()
+
+        # Assert
+        mock_ws_coroutine.cancel.assert_called_once()
+        ws_connection.unsubscribe_all.assert_called_once()
+        ws_connection.close.assert_awaited_once()
+        assert sut.connection_status["connected"] is False
+        assert sut.ws_connection is None
+        assert sut.ws_coroutine is None
+
+
+@pytest.mark.asyncio
+async def test_mdl_restart_with_active_conn_expect_stop_and_start_called(
+    sut
+):
+    # Arrange
+    with patch.object(sut, "stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(sut, "start", new_callable=AsyncMock) as mock_start, \
+         patch("asyncio.sleep", new_callable=AsyncMock):
+        # Act
+        await sut.restart()
+
+        # Assert
+        mock_stop.assert_awaited_once()
+        mock_start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdl_stop_with_exception_expect_error_logged_and_state_reset(
+    sut, mock_ws_client, caplog
+):
+    # Arrange
+    sut.ws_connection = mock_ws_client.return_value
+    mock_ws_coroutine = MagicMock(spec=asyncio.Task)
+    mock_ws_coroutine.cancel.side_effect = Exception("Cancel Error")
+    sut.ws_coroutine = mock_ws_coroutine
+    sut.connection_status["connected"] = True
+
+    # Act
+    with caplog.at_level(logging.ERROR):
+        await sut.stop()
+
+    # Assert
+    assert sut.connection_status["connected"] is False
+    assert sut.connection_status["healthy"] is False
+    assert sut.ws_connection is None
+    assert sut.ws_coroutine is None
+    assert "Cancel Error" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_mdl_restart_with_exception_expect_error_logged(
+    sut, caplog
+):
+    # Arrange
+    with patch.object(
+        sut, "stop", new_callable=AsyncMock,
+        side_effect=Exception("Stop Error")
+    ) as mock_stop, caplog.at_level(logging.ERROR):
+        # Act
+        await sut.restart()
+
+        # Assert
+        mock_stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdl_feed_changed_post_init_expect_connection_status_synced(
+    sut,
+):
+    # Arrange
+    original_feed = sut.feed
+    assert sut.connection_status["feed"] is original_feed
+
+    # Act - reassign feed
+    new_feed = Feed.Delayed
+    sut.feed = new_feed
+
+    # Assert - connection_status reflects the new feed
+    assert sut.feed is new_feed
+    assert sut.connection_status["feed"] is sut.feed
+    assert sut.connection_status["feed"] is new_feed
+
+
+@pytest.mark.asyncio
+async def test_mdl_market_changed_post_init_expect_connection_status_synced(
+    sut,
+):
+    # Arrange
+    original_market = sut.market
+    assert sut.connection_status["market"] is original_market
+
+    # Act - reassign market
+    new_market = Market.Crypto
+    sut.market = new_market
+
+    # Assert - connection_status reflects the new market
+    assert sut.market is new_market
+    assert sut.connection_status["market"] is sut.market
+    assert sut.connection_status["market"] is new_market
+
+
+@pytest.mark.asyncio
+async def test_mdl_subscriptions_changed_post_init_expect_connection_status_synced(
+    sut,
+):
+    # Arrange
+    original_subscriptions = sut.subscriptions
+    assert sut.connection_status["subscriptions"] is original_subscriptions
+
+    # Act - reassign subscriptions like the MDL server API does
+    new_subscriptions = ["T.AAPL", "T.MSFT", "Q.GOOG"]
+    sut.subscriptions = new_subscriptions
+
+    # Assert - connection_status reflects the new subscriptions
+    assert sut.subscriptions is new_subscriptions
+    assert sut.connection_status["subscriptions"] is sut.subscriptions
+    assert sut.connection_status["subscriptions"] is new_subscriptions
+
+
+@pytest.mark.asyncio
+async def test_mdl_feed_changed_while_connected_expect_restart_called(
+    sut,
+):
+    # Arrange
+    sut.connection_status["connected"] = True
+    with patch.object(sut, "restart", new_callable=AsyncMock) as mock_restart:
+        # Act
+        sut.feed = Feed.Delayed
+
+        # Assert
+        assert sut.feed is Feed.Delayed
+        assert sut.connection_status["feed"] is Feed.Delayed
+        mock_restart.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_mdl_market_changed_while_connected_expect_restart_called(
+    sut,
+):
+    # Arrange
+    sut.connection_status["connected"] = True
+    with patch.object(sut, "restart", new_callable=AsyncMock) as mock_restart:
+        # Act
+        sut.market = Market.Crypto
+
+        # Assert
+        assert sut.market is Market.Crypto
+        assert sut.connection_status["market"] is Market.Crypto
+        mock_restart.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_mdl_subscriptions_changed_while_connected_expect_restart_called(
+    sut,
+):
+    # Arrange
+    sut.connection_status["connected"] = True
+    new_subscriptions = ["T.AAPL", "T.MSFT"]
+    with patch.object(sut, "restart", new_callable=AsyncMock) as mock_restart:
+        # Act
+        sut.subscriptions = new_subscriptions
+
+        # Assert
+        assert sut.subscriptions is new_subscriptions
+        assert sut.connection_status["subscriptions"] is new_subscriptions
+        mock_restart.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_mdl_rapid_property_changes_while_connected_expect_multiple_restarts(
+    sut,
+):
+    # Arrange — simulate rapid property changes during active connection
+    sut.connection_status["connected"] = True
+    created_tasks = []
+
+    with patch.object(sut, "restart", new_callable=AsyncMock) as mock_restart, \
+         patch("asyncio.create_task") as mock_create_task:
+        mock_create_task.side_effect = lambda coro: created_tasks.append(coro)
+
+        # Act — change feed, market, and subscriptions in rapid succession
+        sut.feed = Feed.Delayed
+        sut.market = Market.Crypto
+        sut.subscriptions = ["X.BTC-USD"]
+
+    # Assert — each property change scheduled a restart task
+    assert len(created_tasks) == 3
+    assert sut.feed is Feed.Delayed
+    assert sut.market is Market.Crypto
+    assert sut.subscriptions == ["X.BTC-USD"]
+
+
+@pytest.mark.asyncio
+async def test_mdl_async_task_with_success_conn_expect_connected_and_healthy(
+    sut, mock_ws_client, mock_message_handler
+):
+    # Arrange
+    sut.ws_connection = mock_ws_client.return_value
+    # Prevent the infinite loop in async_task
+    with patch("asyncio.gather", new_callable=AsyncMock) as mock_gather:
+        # Act
+        await sut.async_task()
+
+        # Assert
+        # It sets to True then False after gather
+        assert sut.connection_status["connected"] is False
+        mock_gather.assert_awaited_once()
+        args, kwargs = mock_gather.await_args
+        assert kwargs == {"return_exceptions": True}
+        # Verify first argument is a coroutine from connect call
+        assert asyncio.iscoroutine(args[0])
+        # Await it to avoid warnings and clean up
+        await args[0]
+
+
+@pytest.mark.asyncio
+async def test_mdl_async_task_with_recon_expect_recon_attempted(
+    sut, mock_ws_client, mock_rest_client
+):
+    # Arrange
+    sut.ws_connection = mock_ws_client.return_value
+
+    # Mock gather to return immediately
+    # Mock RESTClient.get_market_status to return open then closed
+    market_status_open = MagicMock(spec=MarketStatus)
+    market_status_open.market = "OPEN"
+
+    market_status_closed = MagicMock(spec=MarketStatus)
+    market_status_closed.market = MarketStatusValue.CLOSED.value
+
+    mock_rest_client.return_value.get_market_status.side_effect = [
+        market_status_open,
+        market_status_closed
+    ]
+
+    with patch("asyncio.gather", new_callable=AsyncMock) as mock_gather, \
+         patch.object(sut, "start", new_callable=AsyncMock) as mock_start, \
+         patch("asyncio.sleep", new_callable=AsyncMock):
+        # Act
+        await sut.async_task()
+
+        # Assert
+        mock_start.assert_awaited_once()
+        assert sut.connection_status["reconnects"] == 1
+        assert sut.connection_status["healthy"] is True
+        # Clean up awaited coroutines from gather
+        args, _ = mock_gather.await_args
+        await args[0]
+
+
+@pytest.mark.asyncio
+async def test_mdl_async_task_with_market_closed_expect_sleep_and_retry(
+    sut, mock_ws_client, mock_rest_client
+):
+    # Arrange
+    sut.ws_connection = mock_ws_client.return_value
+
+    market_status_closed = MagicMock(spec=MarketStatus)
+    market_status_closed.market = MarketStatusValue.CLOSED.value
+
+    market_status_open = MagicMock(spec=MarketStatus)
+    market_status_open.market = "OPEN"
+
+    # First closed, then open to trigger start and exit loop
+    mock_rest_client.return_value.get_market_status.side_effect = [
+        market_status_closed,
+        market_status_open,
+        market_status_closed
+    ]
+
+    with patch("asyncio.gather", new_callable=AsyncMock) as mock_gather, \
+         patch.object(sut, "start", new_callable=AsyncMock), \
+         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        # Act
+        await sut.async_task()
+
+        # Assert
+        # Should have slept once for 60 seconds
+        mock_sleep.assert_any_await(60)
+        # Clean up awaited coroutines from gather
+        args, _ = mock_gather.await_args
+        await args[0]
+
+
+@pytest.mark.asyncio
+async def test_mdl_async_task_with_fatal_error_expect_stop_called(
+    sut, mock_ws_client
+):
+    # Arrange
+    sut.ws_connection = mock_ws_client.return_value
+    with patch("asyncio.gather", side_effect=Exception("Fatal Error")), \
+         patch.object(sut, "stop", new_callable=AsyncMock) as mock_stop:
+        # Act
+        await sut.async_task()
+
+        # Assert
+        assert sut.connection_status["healthy"] is False
+        mock_stop.assert_awaited_once()
+
+
+# ── market_is_open + MDL resilience (issue #66) ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_mdl_market_is_open_with_open_market_expect_true(sut, mock_rest_client):
+    """market_is_open() returns True when market status is not CLOSED."""
+    # Arrange
+    market_status = MagicMock(spec=MarketStatus)
+    market_status.market = "OPEN"
+    mock_rest_client.return_value.get_market_status.return_value = market_status
+
+    # Act
+    result = await sut.market_is_open()
+
+    # Assert
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_mdl_market_is_open_with_closed_market_expect_false(sut, mock_rest_client):
+    """market_is_open() returns False when market is CLOSED."""
+    # Arrange
+    market_status = MagicMock(spec=MarketStatus)
+    market_status.market = MarketStatusValue.CLOSED.value
+    mock_rest_client.return_value.get_market_status.return_value = market_status
+
+    # Act
+    result = await sut.market_is_open()
+
+    # Assert
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_mdl_market_is_open_with_none_market_expect_false(sut, mock_rest_client):
+    """market_is_open() returns False when market status is None."""
+    # Arrange
+    market_status = MagicMock(spec=MarketStatus)
+    market_status.market = None
+    mock_rest_client.return_value.get_market_status.return_value = market_status
+
+    # Act
+    result = await sut.market_is_open()
+
+    # Assert
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_mdl_market_is_open_with_dns_error_expect_raise_after_retries(sut, mock_rest_client):
+    """market_is_open() raises after exhausting max_reconnects retries.
+
+    The caller (async_task outer except) catches this, marks healthy=False,
+    and calls stop() so k8s can kill the pod.
+    """
+    # Arrange — always fail, exhaust all retries
+    sut.max_reconnects = 2
+    mock_rest_client.return_value.get_market_status.side_effect = Exception(
+        "HTTPSConnectionPool: Max retries exceeded (NameResolutionError)"
+    )
+
+    # Act / Assert — must raise after max_reconnects attempts
+    with pytest.raises(Exception, match="Max retries exceeded"):
+        await sut.market_is_open()
+
+    # Assert — called exactly max_reconnects times
+    assert mock_rest_client.return_value.get_market_status.call_count == sut.max_reconnects
+
+
+@pytest.mark.asyncio
+async def test_mdl_async_task_with_transient_dns_error_expect_retry_not_fatal(
+    sut, mock_ws_client, mock_rest_client
+):
+    """Transient get_market_status() failures must not kill the reconnect loop.
+
+    The MDL should retry with exponential backoff and recover when the
+    call eventually succeeds, rather than propagating to the fatal handler.
+    """
+    # Arrange
+    sut.ws_connection = mock_ws_client.return_value
+
+    market_status_open = MagicMock(spec=MarketStatus)
+    market_status_open.market = "OPEN"
+
+    # First two calls fail (DNS), third succeeds (open)
+    mock_rest_client.return_value.get_market_status.side_effect = [
+        Exception("DNS failure"),
+        Exception("DNS failure"),
+        market_status_open,
+        MagicMock(market=MarketStatusValue.CLOSED.value),  # exit loop
+    ]
+
+    with patch("asyncio.gather", new_callable=AsyncMock) as mock_gather, \
+         patch.object(sut, "start", new_callable=AsyncMock) as mock_start, \
+         patch("asyncio.sleep", new_callable=AsyncMock):
+        # Act
+        await sut.async_task()
+
+    # Assert — start was called after recovery (not fatal)
+    mock_start.assert_awaited_once()
+    # Assert — MDL is still healthy after transient errors
+    assert sut.connection_status["healthy"] is True
+    # Clean up
+    args, _ = mock_gather.await_args
+    await args[0]
+
+
+
+@pytest.mark.asyncio
+async def test_mdl_async_task_with_max_retries_exhausted_expect_fatal(
+    sut, mock_ws_client, mock_rest_client
+):
+    """When get_market_status() fails max_reconnects times, the error must propagate
+    to the fatal handler — healthy=False, stop() called, pod becomes unhealthy.
+
+    Critically: it must retry exactly max_reconnects times before giving up,
+    NOT fail immediately on the first error (which is the current broken behavior).
+    """
+    # Arrange
+    sut.ws_connection = mock_ws_client.return_value
+    sut.max_reconnects = 3  # reuse max_reconnects as the retry limit
+    mock_rest_client.return_value.get_market_status.side_effect = Exception("DNS failure")
+
+    with patch("asyncio.gather", new_callable=AsyncMock) as mock_gather, \
+         patch.object(sut, "stop", new_callable=AsyncMock) as mock_stop, \
+         patch("asyncio.sleep", new_callable=AsyncMock):
+        # Act
+        await sut.async_task()
+
+    # Assert — stop was called and pod marked unhealthy
+    mock_stop.assert_awaited_once()
+    assert sut.connection_status["healthy"] is False
+    # Assert — get_market_status was called exactly max_reconnects times before giving up
+    assert mock_rest_client.return_value.get_market_status.call_count == sut.max_reconnects
+    # Clean up
+    args, _ = mock_gather.await_args
+    await args[0]

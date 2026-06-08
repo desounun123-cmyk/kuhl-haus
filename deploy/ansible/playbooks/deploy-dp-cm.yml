@@ -1,0 +1,119 @@
+---
+- name: Deploy data plane common resources
+  hosts: all
+  gather_facts: true
+  become: true
+  become_user: stack
+
+  tasks:
+    - name: Set runtime facts for Python interpreter
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: /opt/ansible/venv/bin/python
+        ansible_python_venv_dir: /opt/ansible/venv
+
+    # Namespace
+    - name: Create data plane namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ data_plane_namespace }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # ACME AWS Credentials Secret
+    - name: Create ACME AWS credentials secret
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ data_plane_namespace }}-route53-credentials"
+            namespace: "{{ data_plane_namespace }}"
+          stringData:
+            access-key-id: "{{ acme_route53_access_key_id }}"
+            secret-access-key: "{{ acme_route53_secret_access_key }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      no_log: true
+      when: acme_route53_access_key_id is defined
+
+    # AWS Route53 Issuer
+    - name: Create cert-manager AWS Route53 issuer
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: cert-manager.io/v1
+          kind: Issuer
+          metadata:
+            name: "{{ acme_aws_prod_issuer }}"
+            namespace: "{{ data_plane_namespace }}"
+          spec:
+            acme:
+              server: https://acme-v02.api.letsencrypt.org/directory
+              email: "{{ acme_prod_email }}"
+              privateKeySecretRef:
+                name: "{{ acme_aws_prod_issuer }}"
+              solvers:
+                - selector: {}
+                  dns01:
+                    route53:
+                      region: "{{ acme_aws_region }}"
+                      accessKeyIDSecretRef:
+                        name: "{{ data_plane_namespace }}-route53-credentials"
+                        key: access-key-id
+                      secretAccessKeySecretRef:
+                        name: "{{ data_plane_namespace }}-route53-credentials"
+                        key: secret-access-key
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      when: acme_route53_access_key_id is defined
+
+    # Cloudflare Credentials Secret
+    - name: Create Cloudflare credentials secret
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ data_plane_namespace }}-cloudflare-credentials"
+            namespace: "{{ data_plane_namespace }}"
+          type: Opaque
+          stringData:
+            dns-api-token: "{{ cloudflare_dns_api_token }}"
+            global-api-key: "{{ cloudflare_global_api_key }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      no_log: true
+      when: cloudflare_dns_api_token is defined
+
+    # Cloudflare Issuer
+    - name: Create Cloudflare cert-manager issuer
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: cert-manager.io/v1
+          kind: Issuer
+          metadata:
+            name: "{{ cloudflare_acme_prod_issuer }}"
+            namespace: "{{ data_plane_namespace }}"
+          spec:
+            acme:
+              server: https://acme-v02.api.letsencrypt.org/directory
+              email: "{{ acme_prod_email }}"
+              privateKeySecretRef:
+                name: "{{ cloudflare_acme_prod_issuer }}"
+              solvers:
+                - selector: {}
+                  dns01:
+                    cloudflare:
+                      apiTokenSecretRef:
+                        name: "{{ data_plane_namespace }}-cloudflare-credentials"
+                        key: dns-api-token
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      when: cloudflare_dns_api_token is defined

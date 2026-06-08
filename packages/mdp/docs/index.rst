@@ -1,0 +1,51 @@
+================
+kuhl-haus-mdp
+================
+
+This is the documentation of **kuhl-haus-mdp**. All Kuhl Haus MDP documentation is published
+here because ``kuhl-haus-mdp`` is the only repository with a Read the Docs Gold subscription.
+I don't like ads. You don't like ads. Nobody wants ads in their documentation so, it all lives
+here. It is, after all, a library package. Enjoy the ad-free experience.
+
+
+Contents
+========
+
+.. toctree::
+   :maxdepth: 3
+
+   Overview <readme>
+   Architecture <architecture>
+   Component Architecture <architecture-diagram>
+   Configuration Reference <configuration>
+   Module Reference <mdp/modules>
+   Contributions & Help <contributing>
+   Security Policy <security>
+   License <license>
+   Authors <authors>
+   Troubleshooting <troubleshooting>
+   Changelog <changelog>
+
+
+Indices and tables
+==================
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`
+
+.. _toctree: https://www.sphinx-doc.org/en/master/usage/restructuredtext/directives.html
+.. _reStructuredText: https://www.sphinx-doc.org/en/master/usage/restructuredtext/basics.html
+.. _references: https://www.sphinx-doc.org/en/stable/markup/inline.html
+.. _Python domain syntax: https://www.sphinx-doc.org/en/master/usage/restructuredtext/domains.html#the-python-domain
+.. _Sphinx: https://www.sphinx-doc.org/
+.. _Python: https://docs.python.org/
+.. _Numpy: https://numpy.org/doc/stable
+.. _SciPy: https://docs.scipy.org/doc/scipy/reference/
+.. _matplotlib: https://matplotlib.org/contents.html#
+.. _Pandas: https://pandas.pydata.org/pandas-docs/stable
+.. _Scikit-Learn: https://scikit-learn.org/stable
+.. _autodoc: https://www.sphinx-doc.org/en/master/ext/autodoc.html
+.. _Google style: https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings
+.. _NumPy style: https://numpydoc.readthedocs.io/en/latest/format.html
+.. _classical style: https://www.sphinx-doc.org/en/master/domains.html#info-field-lists

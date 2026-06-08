@@ -1,0 +1,2090 @@
+modules:
+  mdl_health:
+    metrics:
+      # Service status
+      - name: kuhl_haus_service_up
+        help: Service status (1=OK, 0=not OK)
+        path: '{.status_code}'
+        labels:
+          service: '{.service}'
+          container_image: '{.container_image}'
+          image_version: '{.image_version}'
+
+      - name: kuhl_haus_mdl_auto_start_enabled
+        help: Auto-start enabled status
+        path: '{.auto-start}'
+        labels:
+          service: '{.service}'
+
+      # MDL queue connection metrics
+      - name: kuhl_haus_mdl_mdq_connected
+        help: MDQ connection status
+        path: '{.mdq_connection_status.connected}'
+        labels:
+          service: '{.service}'
+
+      # MDL feed connection
+      - name: kuhl_haus_mdl_feed_connected
+        help: MDL feed connection status
+        path: '{.mdl_connection_status.connected}'
+        labels:
+          service: '{.service}'
+          feed: '{.mdl_connection_status.feed}'
+          market: '{.mdl_connection_status.market}'
+
+      - name: kuhl_haus_mdl_reconnect_attempts_total
+        help: Total reconnection attempts
+        path: '{.mdq_connection_status.reconnect_attempts}'
+        labels:
+          service: '{.service}'
+          feed: '{.mdl_connection_status.feed}'
+          market: '{.mdl_connection_status.market}'
+
+      # MDL feed message metrics
+      - name: kuhl_haus_mdl_messages_received_total
+        help: Total messages received from Massive.com WebSocket
+        path: '{.mdq_connection_status.messages_received}'
+        labels:
+          service: '{.service}'
+
+      # Message counts by queue type
+      - name: kuhl_haus_mdl_message_total
+        help: Total messages by queue
+        path: '{.mdq_connection_status.trades}'
+        labels:
+          service: '{.service}'
+          queue: 'trades'
+
+      - name: kuhl_haus_mdl_message_total
+        help: Total messages by queue
+        path: '{.mdq_connection_status.aggregate}'
+        labels:
+          service: '{.service}'
+          queue: 'aggregate'
+
+      - name: kuhl_haus_mdl_message_total
+        help: Total messages by queue
+        path: '{.mdq_connection_status.quotes}'
+        labels:
+          service: '{.service}'
+          queue: 'quotes'
+
+      - name: kuhl_haus_mdl_message_total
+        help: Total messages by queue
+        path: '{.mdq_connection_status.halts}'
+        labels:
+          service: '{.service}'
+          queue: 'halts'
+
+      - name: kuhl_haus_mdl_message_total
+        help: Total messages by queue
+        path: '{.mdq_connection_status.news}'
+        labels:
+          service: '{.service}'
+          queue: 'news'
+
+      - name: kuhl_haus_mdl_message_total
+        help: Total messages by queue
+        path: '{.mdq_connection_status.unknown}'
+        labels:
+          service: '{.service}'
+          queue: 'unknown'
+
+      # Error metrics
+      - name: kuhl_haus_mdl_errors_total
+        help: Error counts by type
+        path: '{.mdq_connection_status.unsupported_messages}'
+        labels:
+          service: '{.service}'
+          error_type: 'unsupported'
+
+  mdp_health:
+    metrics:
+      # Service status
+      - name: kuhl_haus_service_up
+        help: Service status (1=OK, 0=not OK)
+        path: '{.status_code}'
+        labels:
+          service: '{.service}'
+          container_image: '{.container_image}'
+          image_version: '{.image_version}' 
+
+      - name: kuhl_haus_mdp_parallelism
+        help: Configured parallelism
+        path: '{.parallelism}'
+
+      - name: kuhl_haus_mdp_prefetch_count
+        help: Prefetch count
+        path: '{.prefetch_count}'
+
+      - name: kuhl_haus_mdp_max_concurrency
+        help: Max concurrency
+        path: '{.max_concurrency}'
+
+      # Worker 0
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[0].alive}'
+        labels:
+          worker_id: "0"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[0].running}'
+        labels:
+          worker_id: "0"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[0].processed}'
+        labels:
+          worker_id: "0"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[0].errors}'
+        labels:
+          worker_id: "0"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[0].decoding_errors}'
+        labels:
+          worker_id: "0"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[0].published}'
+        labels:
+          worker_id: "0"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[0].processing_errors}'
+        labels:
+          worker_id: "0"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[0].mdq_connected}'
+        labels:
+          worker_id: "0"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[0].mdc_connected}'
+        labels:
+          worker_id: "0"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[0].restarts}'
+        labels:
+          worker_id: "0"
+
+      # Worker 1
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[1].alive}'
+        labels:
+          worker_id: "1"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[1].running}'
+        labels:
+          worker_id: "1"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[1].processed}'
+        labels:
+          worker_id: "1"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[1].errors}'
+        labels:
+          worker_id: "1"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[1].decoding_errors}'
+        labels:
+          worker_id: "1"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[1].published}'
+        labels:
+          worker_id: "1"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[1].processing_errors}'
+        labels:
+          worker_id: "1"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[1].mdq_connected}'
+        labels:
+          worker_id: "1"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[1].mdc_connected}'
+        labels:
+          worker_id: "1"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[1].restarts}'
+        labels:
+          worker_id: "1"
+
+      # Worker 2
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[2].alive}'
+        labels:
+          worker_id: "2"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[2].running}'
+        labels:
+          worker_id: "2"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[2].processed}'
+        labels:
+          worker_id: "2"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[2].errors}'
+        labels:
+          worker_id: "2"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[2].decoding_errors}'
+        labels:
+          worker_id: "2"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[2].published}'
+        labels:
+          worker_id: "2"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[2].processing_errors}'
+        labels:
+          worker_id: "2"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[2].mdq_connected}'
+        labels:
+          worker_id: "2"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[2].mdc_connected}'
+        labels:
+          worker_id: "2"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[2].restarts}'
+        labels:
+          worker_id: "2"
+
+      # Worker 3
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[3].alive}'
+        labels:
+          worker_id: "3"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[3].running}'
+        labels:
+          worker_id: "3"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[3].processed}'
+        labels:
+          worker_id: "3"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[3].errors}'
+        labels:
+          worker_id: "3"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[3].decoding_errors}'
+        labels:
+          worker_id: "3"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[3].published}'
+        labels:
+          worker_id: "3"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[3].processing_errors}'
+        labels:
+          worker_id: "3"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[3].mdq_connected}'
+        labels:
+          worker_id: "3"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[3].mdc_connected}'
+        labels:
+          worker_id: "3"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[3].restarts}'
+        labels:
+          worker_id: "3"
+
+      # Worker 4
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[4].alive}'
+        labels:
+          worker_id: "4"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[4].running}'
+        labels:
+          worker_id: "4"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[4].processed}'
+        labels:
+          worker_id: "4"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[4].errors}'
+        labels:
+          worker_id: "4"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[4].decoding_errors}'
+        labels:
+          worker_id: "4"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[4].published}'
+        labels:
+          worker_id: "4"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[4].processing_errors}'
+        labels:
+          worker_id: "4"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[4].mdq_connected}'
+        labels:
+          worker_id: "4"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[4].mdc_connected}'
+        labels:
+          worker_id: "4"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[4].restarts}'
+        labels:
+          worker_id: "4"
+
+      # Worker 5
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[5].alive}'
+        labels:
+          worker_id: "5"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[5].running}'
+        labels:
+          worker_id: "5"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[5].processed}'
+        labels:
+          worker_id: "5"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[5].errors}'
+        labels:
+          worker_id: "5"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[5].decoding_errors}'
+        labels:
+          worker_id: "5"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[5].published}'
+        labels:
+          worker_id: "5"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[5].processing_errors}'
+        labels:
+          worker_id: "5"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[5].mdq_connected}'
+        labels:
+          worker_id: "5"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[5].mdc_connected}'
+        labels:
+          worker_id: "5"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[5].restarts}'
+        labels:
+          worker_id: "5"
+
+      # Worker 6
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[6].alive}'
+        labels:
+          worker_id: "6"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[6].running}'
+        labels:
+          worker_id: "6"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[6].processed}'
+        labels:
+          worker_id: "6"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[6].errors}'
+        labels:
+          worker_id: "6"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[6].decoding_errors}'
+        labels:
+          worker_id: "6"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[6].published}'
+        labels:
+          worker_id: "6"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[6].processing_errors}'
+        labels:
+          worker_id: "6"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[6].mdq_connected}'
+        labels:
+          worker_id: "6"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[6].mdc_connected}'
+        labels:
+          worker_id: "6"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[6].restarts}'
+        labels:
+          worker_id: "6"
+
+      # Worker 7
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[7].alive}'
+        labels:
+          worker_id: "7"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[7].running}'
+        labels:
+          worker_id: "7"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[7].processed}'
+        labels:
+          worker_id: "7"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[7].errors}'
+        labels:
+          worker_id: "7"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[7].decoding_errors}'
+        labels:
+          worker_id: "7"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[7].published}'
+        labels:
+          worker_id: "7"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[7].processing_errors}'
+        labels:
+          worker_id: "7"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[7].mdq_connected}'
+        labels:
+          worker_id: "7"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[7].mdc_connected}'
+        labels:
+          worker_id: "7"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[7].restarts}'
+        labels:
+          worker_id: "7"
+
+      # Worker 8
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[8].alive}'
+        labels:
+          worker_id: "8"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[8].running}'
+        labels:
+          worker_id: "8"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[8].processed}'
+        labels:
+          worker_id: "8"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[8].errors}'
+        labels:
+          worker_id: "8"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[8].decoding_errors}'
+        labels:
+          worker_id: "8"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[8].published}'
+        labels:
+          worker_id: "8"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[8].processing_errors}'
+        labels:
+          worker_id: "8"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[8].mdq_connected}'
+        labels:
+          worker_id: "8"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[8].mdc_connected}'
+        labels:
+          worker_id: "8"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[8].restarts}'
+        labels:
+          worker_id: "8"
+
+      # Worker 9
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[9].alive}'
+        labels:
+          worker_id: "9"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[9].running}'
+        labels:
+          worker_id: "9"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[9].processed}'
+        labels:
+          worker_id: "9"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[9].errors}'
+        labels:
+          worker_id: "9"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[9].decoding_errors}'
+        labels:
+          worker_id: "9"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[9].published}'
+        labels:
+          worker_id: "9"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[9].processing_errors}'
+        labels:
+          worker_id: "9"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[9].mdq_connected}'
+        labels:
+          worker_id: "9"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[9].mdc_connected}'
+        labels:
+          worker_id: "9"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[9].restarts}'
+        labels:
+          worker_id: "9"
+
+      # Worker 10
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[10].alive}'
+        labels:
+          worker_id: "10"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[10].running}'
+        labels:
+          worker_id: "10"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[10].processed}'
+        labels:
+          worker_id: "10"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[10].errors}'
+        labels:
+          worker_id: "10"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[10].decoding_errors}'
+        labels:
+          worker_id: "10"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[10].published}'
+        labels:
+          worker_id: "10"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[10].processing_errors}'
+        labels:
+          worker_id: "10"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[10].mdq_connected}'
+        labels:
+          worker_id: "10"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[10].mdc_connected}'
+        labels:
+          worker_id: "10"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[10].restarts}'
+        labels:
+          worker_id: "10"
+
+      # Worker 11
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[11].alive}'
+        labels:
+          worker_id: "11"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[11].running}'
+        labels:
+          worker_id: "11"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[11].processed}'
+        labels:
+          worker_id: "11"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[11].errors}'
+        labels:
+          worker_id: "11"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[11].decoding_errors}'
+        labels:
+          worker_id: "11"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[11].published}'
+        labels:
+          worker_id: "11"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[11].processing_errors}'
+        labels:
+          worker_id: "11"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[11].mdq_connected}'
+        labels:
+          worker_id: "11"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[11].mdc_connected}'
+        labels:
+          worker_id: "11"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[11].restarts}'
+        labels:
+          worker_id: "11"
+
+      # Worker 12
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[12].alive}'
+        labels:
+          worker_id: "12"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[12].running}'
+        labels:
+          worker_id: "12"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[12].processed}'
+        labels:
+          worker_id: "12"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[12].errors}'
+        labels:
+          worker_id: "12"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[12].decoding_errors}'
+        labels:
+          worker_id: "12"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[12].published}'
+        labels:
+          worker_id: "12"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[12].processing_errors}'
+        labels:
+          worker_id: "12"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[12].mdq_connected}'
+        labels:
+          worker_id: "12"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[12].mdc_connected}'
+        labels:
+          worker_id: "12"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[12].restarts}'
+        labels:
+          worker_id: "12"
+
+      # Worker 13
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[13].alive}'
+        labels:
+          worker_id: "13"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[13].running}'
+        labels:
+          worker_id: "13"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[13].processed}'
+        labels:
+          worker_id: "13"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[13].errors}'
+        labels:
+          worker_id: "13"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[13].decoding_errors}'
+        labels:
+          worker_id: "13"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[13].published}'
+        labels:
+          worker_id: "13"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[13].processing_errors}'
+        labels:
+          worker_id: "13"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[13].mdq_connected}'
+        labels:
+          worker_id: "13"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[13].mdc_connected}'
+        labels:
+          worker_id: "13"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[13].restarts}'
+        labels:
+          worker_id: "13"
+
+      # Worker 14
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[14].alive}'
+        labels:
+          worker_id: "14"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[14].running}'
+        labels:
+          worker_id: "14"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[14].processed}'
+        labels:
+          worker_id: "14"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[14].errors}'
+        labels:
+          worker_id: "14"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[14].decoding_errors}'
+        labels:
+          worker_id: "14"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[14].published}'
+        labels:
+          worker_id: "14"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[14].processing_errors}'
+        labels:
+          worker_id: "14"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[14].mdq_connected}'
+        labels:
+          worker_id: "14"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[14].mdc_connected}'
+        labels:
+          worker_id: "14"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[14].restarts}'
+        labels:
+          worker_id: "14"
+
+      # Worker 15
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[15].alive}'
+        labels:
+          worker_id: "15"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[15].running}'
+        labels:
+          worker_id: "15"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[15].processed}'
+        labels:
+          worker_id: "15"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[15].errors}'
+        labels:
+          worker_id: "15"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[15].decoding_errors}'
+        labels:
+          worker_id: "15"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[15].published}'
+        labels:
+          worker_id: "15"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[15].processing_errors}'
+        labels:
+          worker_id: "15"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[15].mdq_connected}'
+        labels:
+          worker_id: "15"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[15].mdc_connected}'
+        labels:
+          worker_id: "15"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[15].restarts}'
+        labels:
+          worker_id: "15"
+
+      # Worker 16
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[16].alive}'
+        labels:
+          worker_id: "16"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[16].running}'
+        labels:
+          worker_id: "16"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[16].processed}'
+        labels:
+          worker_id: "16"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[16].errors}'
+        labels:
+          worker_id: "16"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[16].decoding_errors}'
+        labels:
+          worker_id: "16"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[16].published}'
+        labels:
+          worker_id: "16"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[16].processing_errors}'
+        labels:
+          worker_id: "16"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[16].mdq_connected}'
+        labels:
+          worker_id: "16"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[16].mdc_connected}'
+        labels:
+          worker_id: "16"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[16].restarts}'
+        labels:
+          worker_id: "16"
+
+      # Worker 17
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[17].alive}'
+        labels:
+          worker_id: "17"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[17].running}'
+        labels:
+          worker_id: "17"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[17].processed}'
+        labels:
+          worker_id: "17"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[17].errors}'
+        labels:
+          worker_id: "17"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[17].decoding_errors}'
+        labels:
+          worker_id: "17"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[17].published}'
+        labels:
+          worker_id: "17"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[17].processing_errors}'
+        labels:
+          worker_id: "17"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[17].mdq_connected}'
+        labels:
+          worker_id: "17"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[17].mdc_connected}'
+        labels:
+          worker_id: "17"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[17].restarts}'
+        labels:
+          worker_id: "17"
+
+      # Worker 18
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[18].alive}'
+        labels:
+          worker_id: "18"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[18].running}'
+        labels:
+          worker_id: "18"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[18].processed}'
+        labels:
+          worker_id: "18"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[18].errors}'
+        labels:
+          worker_id: "18"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[18].decoding_errors}'
+        labels:
+          worker_id: "18"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[18].published}'
+        labels:
+          worker_id: "18"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[18].processing_errors}'
+        labels:
+          worker_id: "18"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[18].mdq_connected}'
+        labels:
+          worker_id: "18"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[18].mdc_connected}'
+        labels:
+          worker_id: "18"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[18].restarts}'
+        labels:
+          worker_id: "18"
+
+      # Worker 19
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[19].alive}'
+        labels:
+          worker_id: "19"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[19].running}'
+        labels:
+          worker_id: "19"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[19].processed}'
+        labels:
+          worker_id: "19"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[19].errors}'
+        labels:
+          worker_id: "19"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[19].decoding_errors}'
+        labels:
+          worker_id: "19"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[19].published}'
+        labels:
+          worker_id: "19"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[19].processing_errors}'
+        labels:
+          worker_id: "19"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[19].mdq_connected}'
+        labels:
+          worker_id: "19"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[19].mdc_connected}'
+        labels:
+          worker_id: "19"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[19].restarts}'
+        labels:
+          worker_id: "19"
+
+      # Worker 20
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[20].alive}'
+        labels:
+          worker_id: "20"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[20].running}'
+        labels:
+          worker_id: "20"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[20].processed}'
+        labels:
+          worker_id: "20"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[20].errors}'
+        labels:
+          worker_id: "20"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[20].decoding_errors}'
+        labels:
+          worker_id: "20"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[20].published}'
+        labels:
+          worker_id: "20"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[20].processing_errors}'
+        labels:
+          worker_id: "20"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[20].mdq_connected}'
+        labels:
+          worker_id: "20"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[20].mdc_connected}'
+        labels:
+          worker_id: "20"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[20].restarts}'
+        labels:
+          worker_id: "20"
+
+      # Worker 21
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[21].alive}'
+        labels:
+          worker_id: "21"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[21].running}'
+        labels:
+          worker_id: "21"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[21].processed}'
+        labels:
+          worker_id: "21"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[21].errors}'
+        labels:
+          worker_id: "21"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[21].decoding_errors}'
+        labels:
+          worker_id: "21"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[21].published}'
+        labels:
+          worker_id: "21"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[21].processing_errors}'
+        labels:
+          worker_id: "21"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[21].mdq_connected}'
+        labels:
+          worker_id: "21"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[21].mdc_connected}'
+        labels:
+          worker_id: "21"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[21].restarts}'
+        labels:
+          worker_id: "21"
+
+      # Worker 22
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[22].alive}'
+        labels:
+          worker_id: "22"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[22].running}'
+        labels:
+          worker_id: "22"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[22].processed}'
+        labels:
+          worker_id: "22"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[22].errors}'
+        labels:
+          worker_id: "22"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[22].decoding_errors}'
+        labels:
+          worker_id: "22"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[22].published}'
+        labels:
+          worker_id: "22"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[22].processing_errors}'
+        labels:
+          worker_id: "22"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[22].mdq_connected}'
+        labels:
+          worker_id: "22"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[22].mdc_connected}'
+        labels:
+          worker_id: "22"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[22].restarts}'
+        labels:
+          worker_id: "22"
+
+      # Worker 23
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[23].alive}'
+        labels:
+          worker_id: "23"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[23].running}'
+        labels:
+          worker_id: "23"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[23].processed}'
+        labels:
+          worker_id: "23"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[23].errors}'
+        labels:
+          worker_id: "23"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[23].decoding_errors}'
+        labels:
+          worker_id: "23"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[23].published}'
+        labels:
+          worker_id: "23"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[23].processing_errors}'
+        labels:
+          worker_id: "23"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[23].mdq_connected}'
+        labels:
+          worker_id: "23"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[23].mdc_connected}'
+        labels:
+          worker_id: "23"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[23].restarts}'
+        labels:
+          worker_id: "23"
+
+      # Worker 24
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[24].alive}'
+        labels:
+          worker_id: "24"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[24].running}'
+        labels:
+          worker_id: "24"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[24].processed}'
+        labels:
+          worker_id: "24"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[24].errors}'
+        labels:
+          worker_id: "24"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[24].decoding_errors}'
+        labels:
+          worker_id: "24"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[24].published}'
+        labels:
+          worker_id: "24"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[24].processing_errors}'
+        labels:
+          worker_id: "24"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[24].mdq_connected}'
+        labels:
+          worker_id: "24"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[24].mdc_connected}'
+        labels:
+          worker_id: "24"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[24].restarts}'
+        labels:
+          worker_id: "24"
+
+      # Worker 25
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[25].alive}'
+        labels:
+          worker_id: "25"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[25].running}'
+        labels:
+          worker_id: "25"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[25].processed}'
+        labels:
+          worker_id: "25"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[25].errors}'
+        labels:
+          worker_id: "25"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[25].decoding_errors}'
+        labels:
+          worker_id: "25"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[25].published}'
+        labels:
+          worker_id: "25"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[25].processing_errors}'
+        labels:
+          worker_id: "25"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[25].mdq_connected}'
+        labels:
+          worker_id: "25"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[25].mdc_connected}'
+        labels:
+          worker_id: "25"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[25].restarts}'
+        labels:
+          worker_id: "25"
+
+      # Worker 26
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[26].alive}'
+        labels:
+          worker_id: "26"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[26].running}'
+        labels:
+          worker_id: "26"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[26].processed}'
+        labels:
+          worker_id: "26"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[26].errors}'
+        labels:
+          worker_id: "26"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[26].decoding_errors}'
+        labels:
+          worker_id: "26"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[26].published}'
+        labels:
+          worker_id: "26"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[26].processing_errors}'
+        labels:
+          worker_id: "26"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[26].mdq_connected}'
+        labels:
+          worker_id: "26"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[26].mdc_connected}'
+        labels:
+          worker_id: "26"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[26].restarts}'
+        labels:
+          worker_id: "26"
+
+      # Worker 27
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[27].alive}'
+        labels:
+          worker_id: "27"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[27].running}'
+        labels:
+          worker_id: "27"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[27].processed}'
+        labels:
+          worker_id: "27"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[27].errors}'
+        labels:
+          worker_id: "27"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[27].decoding_errors}'
+        labels:
+          worker_id: "27"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[27].published}'
+        labels:
+          worker_id: "27"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[27].processing_errors}'
+        labels:
+          worker_id: "27"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[27].mdq_connected}'
+        labels:
+          worker_id: "27"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[27].mdc_connected}'
+        labels:
+          worker_id: "27"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[27].restarts}'
+        labels:
+          worker_id: "27"
+
+      # Worker 28
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[28].alive}'
+        labels:
+          worker_id: "28"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[28].running}'
+        labels:
+          worker_id: "28"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[28].processed}'
+        labels:
+          worker_id: "28"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[28].errors}'
+        labels:
+          worker_id: "28"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[28].decoding_errors}'
+        labels:
+          worker_id: "28"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[28].published}'
+        labels:
+          worker_id: "28"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[28].processing_errors}'
+        labels:
+          worker_id: "28"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[28].mdq_connected}'
+        labels:
+          worker_id: "28"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[28].mdc_connected}'
+        labels:
+          worker_id: "28"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[28].restarts}'
+        labels:
+          worker_id: "28"
+
+      # Worker 29
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[29].alive}'
+        labels:
+          worker_id: "29"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[29].running}'
+        labels:
+          worker_id: "29"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[29].processed}'
+        labels:
+          worker_id: "29"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[29].errors}'
+        labels:
+          worker_id: "29"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[29].decoding_errors}'
+        labels:
+          worker_id: "29"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[29].published}'
+        labels:
+          worker_id: "29"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[29].processing_errors}'
+        labels:
+          worker_id: "29"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[29].mdq_connected}'
+        labels:
+          worker_id: "29"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[29].mdc_connected}'
+        labels:
+          worker_id: "29"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[29].restarts}'
+        labels:
+          worker_id: "29"
+
+      # Worker 30
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[30].alive}'
+        labels:
+          worker_id: "30"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[30].running}'
+        labels:
+          worker_id: "30"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[30].processed}'
+        labels:
+          worker_id: "30"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[30].errors}'
+        labels:
+          worker_id: "30"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[30].decoding_errors}'
+        labels:
+          worker_id: "30"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[30].published}'
+        labels:
+          worker_id: "30"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[30].processing_errors}'
+        labels:
+          worker_id: "30"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[30].mdq_connected}'
+        labels:
+          worker_id: "30"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[30].mdc_connected}'
+        labels:
+          worker_id: "30"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[30].restarts}'
+        labels:
+          worker_id: "30"
+
+      # Worker 31
+      - name: kuhl_haus_mdp_processor_alive
+        help: Processor alive status
+        path: '{.processors[31].alive}'
+        labels:
+          worker_id: "31"
+
+      - name: kuhl_haus_mdp_processor_running
+        help: Processor running status
+        path: '{.processors[31].running}'
+        labels:
+          worker_id: "31"
+
+      - name: kuhl_haus_mdp_processor_processed_total
+        help: Messages processed
+        path: '{.processors[31].processed}'
+        labels:
+          worker_id: "31"
+
+      - name: kuhl_haus_mdp_processor_errors_total
+        help: Processing errors
+        path: '{.processors[31].errors}'
+        labels:
+          worker_id: "31"
+
+      - name: kuhl_haus_mdp_processor_decoding_errors_total
+        help: Decoding errors
+        path: '{.processors[31].decoding_errors}'
+        labels:
+          worker_id: "31"
+
+      - name: kuhl_haus_mdp_processor_published_total
+        help: Messages published
+        path: '{.processors[31].published}'
+        labels:
+          worker_id: "31"
+
+      - name: kuhl_haus_mdp_processor_processing_errors
+        help: Processing errors due to DataAnalysisException
+        path: '{.processors[31].processing_errors}'
+        labels:
+          worker_id: "31"
+
+      - name: kuhl_haus_mdp_processor_mdq_connected
+        help: MDQ connection status
+        path: '{.processors[31].mdq_connected}'
+        labels:
+          worker_id: "31"
+
+      - name: kuhl_haus_mdp_processor_mdc_connected
+        help: MDC connection status
+        path: '{.processors[31].mdc_connected}'
+        labels:
+          worker_id: "31"
+
+      - name: kuhl_haus_mdp_processor_restarts_total
+        help: Worker restart count
+        path: '{.processors[31].restarts}'
+        labels:
+          worker_id: "31"
+
+  wds_health:
+    metrics:
+      # Service status
+      - name: kuhl_haus_service_up
+        help: Service status (1=OK, 0=not OK)
+        path: '{.status_code}'
+        labels:
+          service: '{.service}'
+          container_image: '{.container_image}'
+          image_version: '{.image_version}' 
+
+      # Active WebSocket clients
+      - name: kuhl_haus_wds_active_websocket_clients
+        help: Active WebSocket connections
+        path: '{.active_ws_clients}'

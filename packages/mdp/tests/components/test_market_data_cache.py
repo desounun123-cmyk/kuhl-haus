@@ -1,0 +1,1155 @@
+import asyncio
+import json
+from unittest.mock import AsyncMock, MagicMock, patch, call
+
+import pytest
+from massive.rest.models import TickerSnapshot
+
+from redis.exceptions import LockNotOwnedError
+
+from kuhl_haus.mdp.components.market_data_cache import MarketDataCache
+from kuhl_haus.mdp.enum.market_data_cache_keys import MarketDataCacheKeys
+from kuhl_haus.mdp.enum.market_data_cache_ttl import MarketDataCacheTTL
+
+
+# -- helpers ---------------------------------------------------------
+
+
+def _snapshot_dict():
+    """Minimal dict that TickerSnapshot.from_dict can parse."""
+    return {
+        "ticker": "TEST",
+        "todaysChange": 0.50,
+        "todaysChangePerc": 25,
+        "updated": 1672450600,
+        "day": {
+            "o": 2.0, "h": 3.5, "l": 1.9, "c": 2.5,
+            "v": 1000, "vw": 2.75, "t": 1672531200,
+            "n": 1, "otc": False,
+        },
+        "prevDay": {
+            "o": 1.75, "h": 2.0, "l": 1.75, "c": 2.0,
+            "v": 500000, "vw": 1.95, "t": 1672450600,
+            "n": 10, "otc": False,
+        },
+        "lastQuote": {
+            "T": "TEST", "f": 0, "q": 1, "t": 0, "y": 0,
+            "P": 2.5, "S": 1, "X": 1, "c": [1], "i": [1],
+            "p": 2.45, "s": 1, "x": 1, "z": 1,
+        },
+        "lastTrade": {
+            "T": "TEST", "f": 0, "q": 1, "t": 0, "y": 0,
+            "c": [0], "e": 1, "i": "ID", "p": 2.47,
+            "r": 1, "s": 1, "x": 1, "z": 1,
+        },
+        "min": {
+            "av": 100000, "o": 2.45, "h": 2.50, "l": 2.45,
+            "c": 2.47, "v": 10000, "vw": 2.75, "otc": False,
+            "t": 1672531200, "n": 10,
+        },
+    }
+
+
+def _financial_float(free_float=2643494955):
+    """Build a FinancialFloat-like mock object."""
+    ff = MagicMock()
+    ff.free_float = free_float
+    ff.free_float_percent = 79.5
+    ff.effective_date = "2025-11-14"
+    ff.ticker = "TEST"
+    return ff
+
+
+# -- fixtures --------------------------------------------------------
+
+
+@pytest.fixture
+def mock_redis():
+    return AsyncMock()
+
+
+@pytest.fixture
+def mock_rest():
+    return MagicMock()
+
+
+@pytest.fixture
+def sut(mock_redis, mock_rest):
+    return MarketDataCache(
+        rest_client=mock_rest,
+        redis_client=mock_redis,
+    )
+
+
+# -- __init__ --------------------------------------------------------
+
+
+def test_mdc_init_with_defaults_expect_attrs_set(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — provided by fixture
+
+    # Act (already constructed)
+    result = sut
+
+    # Assert
+    assert result.rest_client is mock_rest
+    assert result.redis_client is mock_redis
+
+
+# -- delete ----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mdc_delete_with_valid_key_expect_redis_delete(
+    sut, mock_redis,
+):
+    # Arrange
+    key = "some:key"
+
+    # Act
+    await sut.delete(key)
+
+    # Assert
+    mock_redis.delete.assert_awaited_once_with(key)
+
+
+@pytest.mark.asyncio
+async def test_mdc_delete_with_redis_error_expect_no_raise(
+    sut, mock_redis,
+):
+    # Arrange
+    mock_redis.delete = AsyncMock(
+        side_effect=Exception("boom")
+    )
+
+    # Act
+    await sut.delete("k")
+
+    # Assert — no exception propagated
+    mock_redis.delete.assert_awaited_once_with("k")
+
+
+# -- read ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mdc_read_with_cached_value_expect_dict(
+    sut, mock_redis,
+):
+    # Arrange
+    mock_redis.get.return_value = json.dumps({"a": 1})
+
+    # Act
+    result = await sut.read("key")
+
+    # Assert
+    assert result == {"a": 1}
+    mock_redis.get.assert_awaited_once_with("key")
+
+
+@pytest.mark.asyncio
+async def test_mdc_read_with_cache_miss_expect_none(
+    sut, mock_redis,
+):
+    # Arrange
+    mock_redis.get.return_value = None
+
+    # Act
+    result = await sut.read("key")
+
+    # Assert
+    assert result is None
+
+
+# -- write -----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ttl", [0, 300])
+async def test_mdc_write_with_ttl_expect_correct_redis_call(
+    ttl, sut, mock_redis,
+):
+    # Arrange
+    data = {"x": 1}
+
+    # Act
+    await sut.write(data=data, cache_key="k", cache_ttl=ttl)
+
+    # Assert
+    dumped = json.dumps(data)
+    if ttl > 0:
+        mock_redis.setex.assert_awaited_once_with(
+            "k", ttl, dumped,
+        )
+    else:
+        mock_redis.set.assert_awaited_once_with("k", dumped)
+
+
+# -- broadcast -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mdc_broadcast_with_data_expect_publish(
+    sut, mock_redis,
+):
+    # Arrange
+    data = {"price": 1.5}
+
+    # Act
+    await sut.broadcast(data=data, publish_key="ch")
+
+    # Assert
+    mock_redis.publish.assert_awaited_once_with(
+        "ch", json.dumps(data),
+    )
+
+
+# -- delete_ticker_snapshot ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mdc_del_snap_with_ticker_expect_delete_called(
+    sut, mock_redis,
+):
+    # Arrange
+    key = (
+        f"{MarketDataCacheKeys.TICKER_SNAPSHOTS.value}:AAPL"
+    )
+
+    # Act
+    await sut.delete_ticker_snapshot("AAPL")
+
+    # Assert
+    mock_redis.delete.assert_awaited_once_with(key)
+
+
+@pytest.mark.asyncio
+async def test_mdc_del_snap_with_redis_error_expect_no_raise(
+    sut, mock_redis,
+):
+    # Arrange
+    mock_redis.delete = AsyncMock(
+        side_effect=Exception("fail")
+    )
+
+    # Act
+    await sut.delete_ticker_snapshot("X")
+
+    # Assert — error swallowed by delete()
+    mock_redis.delete.assert_awaited_once()
+
+
+# -- get_ticker_snapshot ---------------------------------------------
+
+
+def _mock_lock():
+    """Return a mock Redis distributed lock."""
+    lock = AsyncMock()
+    lock.acquire = AsyncMock()
+    lock.release = AsyncMock()
+    lock.locked = AsyncMock(return_value=True)
+    return lock
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_snap_with_cache_hit_expect_snapshot(
+    sut, mock_redis,
+):
+    # Arrange
+    snap = _snapshot_dict()
+    mock_redis.get.return_value = json.dumps(snap)
+
+    # Act
+    result = await sut.get_ticker_snapshot("TEST")
+
+    # Assert
+    assert isinstance(result, TickerSnapshot)
+    assert result.ticker == "TEST"
+    mock_redis.get.assert_awaited_once()
+    mock_redis.lock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_snap_with_miss_expect_api_call(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — cache miss, lock acquired, second read also miss
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_snapshot = MagicMock(spec=TickerSnapshot)
+    mock_snapshot.ticker = "TEST"
+    mock_rest.get_snapshot_ticker.return_value = mock_snapshot
+    with patch(
+        "kuhl_haus.mdp.components.market_data_cache"
+        ".ticker_snapshot_to_dict",
+        return_value=_snapshot_dict(),
+    ):
+        # Act
+        result = await sut.get_ticker_snapshot("TEST")
+
+    # Assert
+    lock.acquire.assert_awaited_once()
+    mock_rest.get_snapshot_ticker.assert_called_once_with(
+        market_type="stocks", ticker="TEST",
+    )
+    mock_redis.setex.assert_awaited_once()
+    lock.release.assert_awaited_once()
+    assert result is mock_snapshot
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_snap_with_miss_double_check_hit(
+    sut, mock_redis,
+):
+    # Arrange — cache miss on first read, lock acquired, cache hit
+    # on re-check (another caller populated the cache)
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    snap = _snapshot_dict()
+    mock_redis.get.side_effect = [None, json.dumps(snap)]
+
+    # Act
+    result = await sut.get_ticker_snapshot("TEST")
+
+    # Assert — no API call, lock released
+    assert isinstance(result, TickerSnapshot)
+    assert result.ticker == "TEST"
+    lock.release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_snap_lock_uses_correct_key_and_ttl(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_snapshot = MagicMock(spec=TickerSnapshot)
+    mock_rest.get_snapshot_ticker.return_value = mock_snapshot
+    with patch(
+        "kuhl_haus.mdp.components.market_data_cache"
+        ".ticker_snapshot_to_dict",
+        return_value=_snapshot_dict(),
+    ):
+        # Act
+        await sut.get_ticker_snapshot("AAPL")
+
+    # Assert — lock created with correct key and TTL
+    expected_key = (
+        f"{MarketDataCacheKeys.TICKER_SNAPSHOT_LOCK.value}:AAPL"
+    )
+    mock_redis.lock.assert_called_once_with(
+        expected_key,
+        timeout=MarketDataCacheTTL.TICKER_SNAPSHOT_LOCK.value,
+    )
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_snap_with_miss_expect_duration_recorded(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_snapshot = MagicMock(spec=TickerSnapshot)
+    mock_rest.get_snapshot_ticker.return_value = mock_snapshot
+    sut.snapshot_api_duration = MagicMock()
+    with patch(
+        "kuhl_haus.mdp.components.market_data_cache"
+        ".ticker_snapshot_to_dict",
+        return_value=_snapshot_dict(),
+    ):
+        # Act
+        await sut.get_ticker_snapshot("TEST")
+
+    # Assert — histogram records API call duration
+    sut.snapshot_api_duration.record.assert_called_once()
+    duration = sut.snapshot_api_duration.record.call_args[0][0]
+    assert isinstance(duration, float)
+    assert duration >= 0
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_snap_with_miss_lock_already_released(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — lock no longer held when finally runs
+    lock = _mock_lock()
+    lock.locked = AsyncMock(return_value=False)
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_snapshot = MagicMock(spec=TickerSnapshot)
+    mock_rest.get_snapshot_ticker.return_value = mock_snapshot
+    with patch(
+        "kuhl_haus.mdp.components.market_data_cache"
+        ".ticker_snapshot_to_dict",
+        return_value=_snapshot_dict(),
+    ):
+        # Act
+        await sut.get_ticker_snapshot("TEST")
+
+    # Assert — release not called when lock already expired
+    lock.release.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_snap_lock_not_owned_expect_warning(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — lock.locked() returns True but release raises
+    # LockNotOwnedError (lock expired between check and release)
+    lock = _mock_lock()
+    lock.locked = AsyncMock(return_value=True)
+    lock.release = AsyncMock(
+        side_effect=LockNotOwnedError(
+            "Cannot release a lock that's no longer owned"
+        )
+    )
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_snapshot = MagicMock(spec=TickerSnapshot)
+    mock_rest.get_snapshot_ticker.return_value = mock_snapshot
+    with patch(
+        "kuhl_haus.mdp.components.market_data_cache"
+        ".ticker_snapshot_to_dict",
+        return_value=_snapshot_dict(),
+    ):
+        # Act — should not raise
+        result = await sut.get_ticker_snapshot("TEST")
+
+    # Assert — LockNotOwnedError swallowed, result returned
+    assert result is mock_snapshot
+    lock.release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_snap_pending_event_with_cache_hit(
+    sut, mock_redis,
+):
+    # Arrange — simulate an in-flight fetch by pre-registering
+    # an already-set event; the waiter should read the cache
+    # populated by the leader and return without touching the lock.
+    event = asyncio.Event()
+    event.set()
+    sut._pending_snapshots["TEST"] = event
+    snap = _snapshot_dict()
+    mock_redis.get.side_effect = [None, json.dumps(snap)]
+
+    # Act
+    result = await sut.get_ticker_snapshot("TEST")
+
+    # Assert
+    assert isinstance(result, TickerSnapshot)
+    assert result.ticker == "TEST"
+    mock_redis.lock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_snap_pending_event_with_miss_fallthrough(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — event is set but the leader failed; cache is still
+    # empty so the waiter must become the new leader.
+    event = asyncio.Event()
+    event.set()
+    sut._pending_snapshots["TEST"] = event
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_snapshot = MagicMock(spec=TickerSnapshot)
+    mock_rest.get_snapshot_ticker.return_value = mock_snapshot
+    with patch(
+        "kuhl_haus.mdp.components.market_data_cache"
+        ".ticker_snapshot_to_dict",
+        return_value=_snapshot_dict(),
+    ):
+        # Act
+        result = await sut.get_ticker_snapshot("TEST")
+
+    # Assert — fell through and acquired the lock itself
+    lock.acquire.assert_awaited_once()
+    mock_rest.get_snapshot_ticker.assert_called_once()
+    assert result is mock_snapshot
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_snap_event_set_on_leader_exception(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — the API call throws; the event must still be
+    # signaled so waiters never hang.
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.get_snapshot_ticker.side_effect = RuntimeError(
+        "API down"
+    )
+
+    # Act
+    with pytest.raises(RuntimeError, match="API down"):
+        await sut.get_ticker_snapshot("TEST")
+
+    # Assert — event was set and removed from pending dict
+    assert "TEST" not in sut._pending_snapshots
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_snap_pending_cleaned_after_success(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_snapshot = MagicMock(spec=TickerSnapshot)
+    mock_rest.get_snapshot_ticker.return_value = mock_snapshot
+    with patch(
+        "kuhl_haus.mdp.components.market_data_cache"
+        ".ticker_snapshot_to_dict",
+        return_value=_snapshot_dict(),
+    ):
+        # Act
+        await sut.get_ticker_snapshot("TEST")
+
+    # Assert — pending dict is cleaned up
+    assert "TEST" not in sut._pending_snapshots
+
+
+@pytest.mark.asyncio
+async def test_mdc_init_pending_snapshots_empty(sut):
+    # Assert — dict initialised as empty
+    assert sut._pending_snapshots == {}
+
+
+# -- get_avg_volume --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_with_cache_hit_expect_cached(
+    sut, mock_redis,
+):
+    # Arrange
+    mock_redis.get.return_value = json.dumps(1500000)
+
+    # Act
+    result = await sut.get_avg_volume("TEST")
+
+    # Assert
+    assert result == 1500000
+    mock_redis.get.assert_awaited_once()
+    mock_redis.lock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_with_single_ratio_expect_val(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    ratio = MagicMock()
+    ratio.average_volume = 2500000
+    mock_rest.list_financials_ratios.return_value = iter(
+        [ratio]
+    )
+
+    # Act
+    result = await sut.get_avg_volume("TEST")
+
+    # Assert
+    assert result == 2500000
+    lock.acquire.assert_awaited_once()
+    mock_rest.list_financials_ratios.assert_called_once_with(
+        ticker="TEST",
+    )
+    mock_redis.setex.assert_awaited_once()
+    lock.release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_with_multi_ratio_expect_calc(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    r1 = MagicMock()
+    r2 = MagicMock()
+    mock_rest.list_financials_ratios.return_value = iter(
+        [r1, r2]
+    )
+    agg1 = MagicMock()
+    agg1.volume = 100
+    agg2 = MagicMock()
+    agg2.volume = 200
+    mock_rest.list_aggs.return_value = iter([agg1, agg2])
+
+    # Act
+    result = await sut.get_avg_volume("TEST")
+
+    # Assert
+    assert result == 150.0  # (100+200)/2
+    mock_rest.list_aggs.assert_called_once()
+    mock_redis.setex.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_with_no_aggs_expect_zero(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_financials_ratios.return_value = iter(
+        [MagicMock(), MagicMock()]
+    )
+    mock_rest.list_aggs.return_value = iter([])
+
+    # Act
+    result = await sut.get_avg_volume("TEST")
+
+    # Assert
+    assert result == 0
+    mock_redis.setex.assert_awaited_once()
+    call_args = mock_redis.setex.await_args
+    assert call_args[0][1] == (
+        MarketDataCacheTTL.NEGATIVE_CACHE_SESSION.value
+    )
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_with_over_30_aggs_expect_capped(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — 35 aggs, only first 30 should be summed (break at 31st)
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_financials_ratios.return_value = iter(
+        [MagicMock(), MagicMock()]
+    )
+    aggs = []
+    for _ in range(35):
+        agg = MagicMock()
+        agg.volume = 100
+        aggs.append(agg)
+    mock_rest.list_aggs.return_value = iter(aggs)
+
+    # Act
+    result = await sut.get_avg_volume("TEST")
+
+    # Assert — 30 * 100 / 30 = 100.0, not 35 * 100 / 35
+    assert result == 100.0
+    mock_redis.setex.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_with_miss_double_check_hit(
+    sut, mock_redis,
+):
+    # Arrange — cache miss on first read, lock acquired, cache hit
+    # on re-check (another caller populated the cache)
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.side_effect = [None, json.dumps(2500000)]
+
+    # Act
+    result = await sut.get_avg_volume("TEST")
+
+    # Assert — no API call, lock released
+    assert result == 2500000
+    lock.release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_lock_uses_correct_key_and_ttl(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    ratio = MagicMock()
+    ratio.average_volume = 100
+    mock_rest.list_financials_ratios.return_value = iter(
+        [ratio]
+    )
+
+    # Act
+    await sut.get_avg_volume("AAPL")
+
+    # Assert — lock created with correct key and TTL
+    expected_key = (
+        f"{MarketDataCacheKeys.TICKER_AVG_VOLUME_LOCK.value}:AAPL"
+    )
+    mock_redis.lock.assert_called_once_with(
+        expected_key,
+        timeout=MarketDataCacheTTL.TICKER_AVG_VOLUME_LOCK.value,
+    )
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_with_miss_expect_duration_recorded(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    ratio = MagicMock()
+    ratio.average_volume = 100
+    mock_rest.list_financials_ratios.return_value = iter(
+        [ratio]
+    )
+    sut.avg_volume_api_duration = MagicMock()
+
+    # Act
+    await sut.get_avg_volume("TEST")
+
+    # Assert — histogram records API call duration
+    sut.avg_volume_api_duration.record.assert_called_once()
+    duration = sut.avg_volume_api_duration.record.call_args[0][0]
+    assert isinstance(duration, float)
+    assert duration >= 0
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_with_miss_lock_already_released(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — lock no longer held when finally runs
+    lock = _mock_lock()
+    lock.locked = AsyncMock(return_value=False)
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    ratio = MagicMock()
+    ratio.average_volume = 100
+    mock_rest.list_financials_ratios.return_value = iter(
+        [ratio]
+    )
+
+    # Act
+    await sut.get_avg_volume("TEST")
+
+    # Assert — release not called when lock already expired
+    lock.release.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_lock_not_owned_expect_warning(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — lock.locked() returns True but release raises
+    # LockNotOwnedError (lock expired between check and release)
+    lock = _mock_lock()
+    lock.locked = AsyncMock(return_value=True)
+    lock.release = AsyncMock(
+        side_effect=LockNotOwnedError(
+            "Cannot release a lock that's no longer owned"
+        )
+    )
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    ratio = MagicMock()
+    ratio.average_volume = 100
+    mock_rest.list_financials_ratios.return_value = iter(
+        [ratio]
+    )
+
+    # Act — should not raise
+    result = await sut.get_avg_volume("TEST")
+
+    # Assert — LockNotOwnedError swallowed, result returned
+    assert result == 100
+    lock.release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_pending_event_with_cache_hit(
+    sut, mock_redis,
+):
+    # Arrange — simulate an in-flight fetch by pre-registering
+    # an already-set event; the waiter should read the cache
+    # populated by the leader and return without touching the lock.
+    event = asyncio.Event()
+    event.set()
+    sut._pending_avg_volumes["TEST"] = event
+    mock_redis.get.side_effect = [None, json.dumps(999)]
+
+    # Act
+    result = await sut.get_avg_volume("TEST")
+
+    # Assert
+    assert result == 999
+    mock_redis.lock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_pending_event_with_miss_fallthrough(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — event is set but the leader failed; cache is still
+    # empty so the waiter must become the new leader.
+    event = asyncio.Event()
+    event.set()
+    sut._pending_avg_volumes["TEST"] = event
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    ratio = MagicMock()
+    ratio.average_volume = 500
+    mock_rest.list_financials_ratios.return_value = iter(
+        [ratio]
+    )
+
+    # Act
+    result = await sut.get_avg_volume("TEST")
+
+    # Assert — fell through and acquired the lock itself
+    lock.acquire.assert_awaited_once()
+    mock_rest.list_financials_ratios.assert_called_once()
+    assert result == 500
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_event_set_on_leader_exception(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — the API call throws; the event must still be
+    # signaled so waiters never hang.
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_financials_ratios.side_effect = RuntimeError(
+        "API down"
+    )
+
+    # Act
+    with pytest.raises(RuntimeError, match="API down"):
+        await sut.get_avg_volume("TEST")
+
+    # Assert — event was set and removed from pending dict
+    assert "TEST" not in sut._pending_avg_volumes
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_avg_vol_pending_cleaned_after_success(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    ratio = MagicMock()
+    ratio.average_volume = 100
+    mock_rest.list_financials_ratios.return_value = iter(
+        [ratio]
+    )
+
+    # Act
+    await sut.get_avg_volume("TEST")
+
+    # Assert — pending dict is cleaned up
+    assert "TEST" not in sut._pending_avg_volumes
+
+
+@pytest.mark.asyncio
+async def test_mdc_init_pending_avg_volumes_empty(sut):
+    # Assert — dict initialised as empty
+    assert sut._pending_avg_volumes == {}
+
+
+# -- get_free_float --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_with_cache_hit_expect_cached(
+    sut, mock_redis,
+):
+    # Arrange
+    mock_redis.get.return_value = json.dumps(2643494955)
+
+    # Act
+    result = await sut.get_free_float("TEST")
+
+    # Assert
+    assert result == 2643494955
+    mock_redis.lock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_with_cache_miss_expect_api_call(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_stocks_floats = MagicMock(
+        return_value=iter([_financial_float()])
+    )
+
+    # Act
+    result = await sut.get_free_float("TEST")
+
+    # Assert
+    assert result == 2643494955
+    mock_rest.list_stocks_floats.assert_called_once_with(ticker="TEST")
+    lock.acquire.assert_awaited_once()
+    mock_redis.setex.assert_awaited_once()
+    lock.release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_with_empty_results_expect_zero(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_stocks_floats = MagicMock(return_value=iter([]))
+
+    # Act
+    result = await sut.get_free_float("TEST")
+
+    # Assert
+    assert result == 0
+    mock_redis.setex.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_with_api_error_expect_raise(
+    sut, mock_redis, mock_rest,
+):
+    """Unexpected errors from RESTClient propagate to the caller."""
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_stocks_floats = MagicMock(
+        side_effect=Exception("HTTP 500")
+    )
+
+    # Act & Assert
+    with pytest.raises(Exception, match="HTTP 500"):
+        await sut.get_free_float("TEST")
+
+    mock_redis.setex.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_with_miss_double_check_hit(
+    sut, mock_redis,
+):
+    # Arrange — cache miss on first read, lock acquired, cache hit
+    # on re-check (another caller populated the cache)
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.side_effect = [
+        None, json.dumps(2643494955),
+    ]
+
+    # Act
+    result = await sut.get_free_float("TEST")
+
+    # Assert — no API call, lock released
+    assert result == 2643494955
+    lock.release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_lock_uses_correct_key_and_ttl(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_stocks_floats = MagicMock(
+        return_value=iter([_financial_float()])
+    )
+
+    # Act
+    await sut.get_free_float("AAPL")
+
+    # Assert — lock created with correct key and TTL
+    expected_key = (
+        f"{MarketDataCacheKeys.TICKER_FREE_FLOAT_LOCK.value}"
+        f":AAPL"
+    )
+    mock_redis.lock.assert_called_once_with(
+        expected_key,
+        timeout=MarketDataCacheTTL.TICKER_FREE_FLOAT_LOCK.value,
+    )
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_with_miss_expect_duration_recorded(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_stocks_floats = MagicMock(
+        return_value=iter([_financial_float()])
+    )
+    sut.free_float_api_duration = MagicMock()
+
+    # Act
+    await sut.get_free_float("TEST")
+
+    # Assert — histogram records API call duration
+    sut.free_float_api_duration.record.assert_called_once()
+    duration = (
+        sut.free_float_api_duration.record.call_args[0][0]
+    )
+    assert isinstance(duration, float)
+    assert duration >= 0
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_with_miss_lock_already_released(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — lock no longer held when finally runs
+    lock = _mock_lock()
+    lock.locked = AsyncMock(return_value=False)
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_stocks_floats = MagicMock(
+        return_value=iter([_financial_float()])
+    )
+
+    # Act
+    await sut.get_free_float("TEST")
+
+    # Assert — release not called when lock already expired
+    lock.release.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_lock_not_owned_expect_warning(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — lock.locked() returns True but release raises
+    # LockNotOwnedError (lock expired between check and release)
+    lock = _mock_lock()
+    lock.locked = AsyncMock(return_value=True)
+    lock.release = AsyncMock(
+        side_effect=LockNotOwnedError(
+            "Cannot release a lock that's no longer owned"
+        )
+    )
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_stocks_floats = MagicMock(
+        return_value=iter([_financial_float()])
+    )
+
+    # Act — should not raise
+    result = await sut.get_free_float("TEST")
+
+    # Assert — LockNotOwnedError swallowed, result returned
+    assert result == 2643494955
+    lock.release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_pending_event_with_cache_hit(
+    sut, mock_redis,
+):
+    # Arrange — simulate an in-flight fetch by pre-registering
+    # an already-set event; the waiter should read the cache
+    # populated by the leader and return without touching the lock.
+    event = asyncio.Event()
+    event.set()
+    sut._pending_free_floats["TEST"] = event
+    mock_redis.get.side_effect = [
+        None, json.dumps(2643494955),
+    ]
+
+    # Act
+    result = await sut.get_free_float("TEST")
+
+    # Assert
+    assert result == 2643494955
+    mock_redis.lock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_pending_event_with_miss_fallthrough(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — event is set but the leader failed; cache is still
+    # empty so the waiter must become the new leader.
+    event = asyncio.Event()
+    event.set()
+    sut._pending_free_floats["TEST"] = event
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_stocks_floats = MagicMock(
+        return_value=iter([_financial_float()])
+    )
+
+    # Act
+    result = await sut.get_free_float("TEST")
+
+    # Assert — fell through and acquired the lock itself
+    lock.acquire.assert_awaited_once()
+    assert result == 2643494955
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_event_set_on_leader_exception(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange — the API call throws; the event must still be
+    # signaled so waiters never hang.
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_stocks_floats = MagicMock(
+        side_effect=RuntimeError("API down")
+    )
+
+    # Act
+    with pytest.raises(RuntimeError, match="API down"):
+        await sut.get_free_float("TEST")
+
+    # Assert — event was set and removed from pending dict
+    assert "TEST" not in sut._pending_free_floats
+
+
+@pytest.mark.asyncio
+async def test_mdc_get_ff_pending_cleaned_after_success(
+    sut, mock_redis, mock_rest,
+):
+    # Arrange
+    lock = _mock_lock()
+    mock_redis.lock = MagicMock(return_value=lock)
+    mock_redis.get.return_value = None
+    mock_rest.list_stocks_floats = MagicMock(
+        return_value=iter([_financial_float()])
+    )
+
+    # Act
+    await sut.get_free_float("TEST")
+
+    # Assert — pending dict is cleaned up
+    assert "TEST" not in sut._pending_free_floats
+
+
+@pytest.mark.asyncio
+async def test_mdc_init_pending_free_floats_empty(sut):
+    # Assert — dict initialised as empty
+    assert sut._pending_free_floats == {}

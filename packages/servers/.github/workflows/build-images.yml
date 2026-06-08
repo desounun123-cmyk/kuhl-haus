@@ -1,0 +1,304 @@
+name: Build Images
+permissions:
+  contents: read
+  pull-requests: write
+
+on:
+  push:
+    branches:
+      - mainline
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Build and Test Package
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for tags
+        persist-credentials: false
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.14"
+    - name: Install package with test dependencies
+      run: pip install --no-cache-dir -e ".[testing]"
+
+    # Tests
+    - name: Run tests with coverage
+      run: pytest --cov=kuhl_haus.servers --cov-report=html --cov-report=xml tests -v
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: htmlcov/
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v5
+      if: startsWith(github.ref, 'refs/tags/')  # only upload on tag pushes
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        slug: kuhl-haus/kuhl-haus-mdp-servers
+        fail_ci_if_error: true
+
+  build-docker:
+    name: Build Docker Image
+    needs: build-and-test
+    if: github.event_name != 'pull_request'  # skip Docker build on PRs
+    runs-on: ubuntu-latest
+
+    permissions:
+      packages: write  # IMPORTANT: mandatory for publishing packages
+      # https://docs.github.com/en/packages/learn-github-packages/about-permissions-for-github-packages#about-scopes-and-permissions-for-package-registries
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for tags
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Install build tools
+        run: pip install --no-cache-dir setuptools-scm
+
+      - name: Determine image tag
+        id: determine_tag
+        run: |
+          # Try to get tag from git
+          GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "")
+      
+          if [ -n "$GIT_TAG" ]; then
+            # Remove 'v' prefix if present
+            IMAGE_TAG=${GIT_TAG#v}
+            echo "Using git tag: $IMAGE_TAG"
+          else
+            # Install setuptools-scm if not already available
+            pip install setuptools-scm >/dev/null 2>&1
+      
+            # Get version from setuptools-scm with no-local-version
+            VERSION=$(python -c "from setuptools_scm import get_version; print(get_version(local_scheme='no-local-version'))" 2>/dev/null)
+      
+            if [ $? -ne 0 ] || [ -z "$VERSION" ]; then
+              echo "Error: Could not determine version from setuptools-scm" >&2
+              exit 1
+            fi
+      
+            # Add commit hash as suffix for non-tagged builds
+            COMMIT_SHORT=$(git rev-parse --short HEAD)
+      
+            # Format: version-hash (e.g., 0.1.1.dev2-a1b2c3d)
+            IMAGE_TAG="${VERSION}-${COMMIT_SHORT}"
+            echo "Using setuptools-scm version: $IMAGE_TAG"
+          fi
+      
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # FDL images
+      - name: Build and push FDL Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./fdl.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-fdl-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-fdl-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build and push FDL (OTel auto-instrumented) Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./fdl_otel.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-fdl-otel-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-fdl-otel-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # FDP images
+      - name: Build and push FDP Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./fdp.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-fdp-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-fdp-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build and push FDP (OTel auto-instrumented) Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./fdp_otel.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-fdp-otel-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-fdp-otel-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # MDL images
+      - name: Build and push MDL Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./mdl.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mdl-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mdl-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build and push MDL (OTel auto-instrumented) Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./mdl_otel.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mdl-otel-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mdl-otel-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # MDP images
+      - name: Build and push MDP Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./mdp.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mdp-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mdp-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build and push MDP (OTel auto-instrumented) Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./mdp_otel.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mdp-otel-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mdp-otel-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # LBA images
+      - name: Build and push LBA Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./lba.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-lba-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-lba-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build and push LBA (OTel auto-instrumented) Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./lba_otel.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-lba-otel-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-lba-otel-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # MDS images
+      - name: Build and push MDS Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./mds.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mds-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mds-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build and push MDS (OTel auto-instrumented) Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./mds_otel.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mds-otel-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mds-otel-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # WDS images
+      - name: Build and push WDS Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./wds.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-wds-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-wds-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build and push WDS (OTel auto-instrumented) Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./wds_otel.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-wds-otel-server:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-wds-otel-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Server Base image
+      - name: Build and push MDP Server Base Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./base.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mdp-server-base:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/kuhl-haus-mdp-server-base:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

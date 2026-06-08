@@ -1,0 +1,168 @@
+@startuml Market Data Platform Architecture
+
+skinparam componentStyle rectangle
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam ArrowColor #333333
+skinparam ArrowThickness 2
+
+title Kuhl Haus Market Data Platform - Component Architecture
+
+cloud "Massive.com WebSocket API" as Massive #FFEEEE
+cloud "Finlight News API" as Finlight #EEF4EE
+
+package "Application Server" #EEEEEE {
+    component "Service Control Plane (SCP)" as SCP #7ED321
+}
+
+package "Market Data Listener (MDL)" #DDDDDD {
+    component "MassiveDataListener" as Listener #0099FF
+    component "MassiveDataQueues" as Queues #0099FF
+    component "QueueNameResolver" as Resolver #0099FF
+}
+
+package "Finlight Data Listener (FDL)" #DDDDDD {
+    component "FinlightDataListener" as FDListener #00FF99
+    component "FinlightDataQueues" as FDQueues #00FF99
+}
+
+queue "Market Data Queues (MDQ)" as MDQ #E67E22
+
+package "Market Data Scanner (MDS)" #DDDDDD {
+    component "Market Data Scanner" as MDScanner #DDDD11
+    component "DailyRangeAnalyzer" as DRA #DDDD11
+}
+
+package "Market Data Processor (MDP)" #DDDDDD {
+    component "MassiveDataProcessor" as Processor #0099FF
+    component "MassiveDataAnalyzer" as Router #0099FF
+    component "LeaderboardAnalyzer" as Leaderboard #0099FF
+    component "TopTradesAnalyzer" as TopTrades #0099FF
+    component "TopStocksAnalyzer" as TopStocks #0099FF
+}
+
+package "Finlight Data Processor (FDP)" #DDDDDD {
+    component "FinlightDataProcessor" as FDProcessor #00FF99
+    component "FinlightDataAnalyzer" as FDAnalyzer #00FF99
+}
+
+database "Market Data Cache (MDC)" as MDC #FF0011
+database "Widget Data Cache (WDC)" as WDC #DD00DD
+
+package "Widget Data Service (WDS)" #DDDDDD {
+    component "WidgetDataService" as Widget #DD00DD
+}
+
+package "Observability" #FFF9E6 {
+    component "OpenTelemetry" as OTel
+    component "Structured Logging" as Logging
+}
+
+package "Shared Libraries" #F0F0F0 {
+    component "ProcessManager" as PM
+    component "WebSocketMessageSerde" as Serde
+    component "Utils" as Utils
+}
+
+actor "Web Clients" as Clients
+
+Massive -[#blue,thickness=3]-> Listener : WebSocket stream
+Listener --> Resolver : route by type
+Resolver --> Queues : publish
+Queues -[#blue,thickness=3]-> MDQ : RabbitMQ (TTL: 5s)
+
+Finlight -[#green,thickness=3]-> FDListener : WebSocket stream
+FDListener --> FDQueues : handle_message
+FDQueues -[#green,thickness=3]-> MDQ : RabbitMQ (news queue)
+
+MDQ -[#green,thickness=3]-> FDProcessor : consume (news queue)
+MDQ -[#blue,thickness=3]-> Processor : consume (prefetch: 100)
+
+Processor <--> Router : returns MarketDataAnalyzerResult
+Processor <--> Leaderboard : returns MarketDataAnalyzerResult
+Processor <--> TopTrades : returns MarketDataAnalyzerResult
+Processor <--> TopStocks : returns MarketDataAnalyzerResult
+
+Router -[#red,thickness=3]-> MDC : analyzer cache (internal)
+TopTrades -[#red,thickness=3]-> MDC : analyzer cache (internal)
+TopStocks -[#red,thickness=3]-> MDC : analyzer cache (internal)
+Leaderboard -[#red,thickness=3]-> MDC : analyzer cache (internal)
+Processor -[#blue,thickness=3]-> WDC : widget results + pub/sub
+
+FDProcessor <-[#black,thickness=3]-> FDAnalyzer : returns MarketDataAnalyzerResult
+FDProcessor -[#green,thickness=3]-> WDC : widget results + pub/sub
+
+DRA -[#DDDD11,thickness=3]-> WDC : analyzer cache (internal)
+MDScanner <-[#black,thickness=3]-> DRA : returns MarketDataAnalyzerResult
+MDScanner <-[#DDDD11,thickness=3]-> WDC : widget results + pub/sub
+
+WDC -[#purple,thickness=3]-> Widget : Redis pub/sub
+Widget -[#purple,thickness=3]-> Clients : WebSocket streaming
+
+SCP -[#green,thickness=3]-> Clients : SPA + auth token
+
+Listener .down.> OTel : traces/metrics
+FDListener .down.> OTel : traces/metrics
+Processor .down.> OTel : traces/metrics
+FDProcessor .down.> OTel : traces/metrics
+Widget .down.> OTel : traces/metrics
+Listener .down.> Logging : JSON logs
+FDListener .down.> Logging : JSON logs
+Processor .down.> Logging : JSON logs
+FDProcessor .down.> Logging : JSON logs
+Widget .down.> Logging : JSON logs
+
+Listener --> Serde : serialize
+Processor --> PM : orchestrate
+Listener --> Utils : Miscellaneous
+
+note right of MDQ
+  RabbitMQ
+  Non-persistent messages
+  Per-subscription queues
+  FIFO ordering
+end note
+
+note right of MDC
+  Market Data Cache (MDC)
+  Redis db 0
+  Internal analyzer state
+  Leaderboards, snapshots,
+  float, avg volume, tickers
+  TTL policies (5s-7d)
+end note
+
+note right of WDC
+  Widget Data Cache (WDC)
+  Redis db 1
+  Client-facing results
+  Scanner feeds, quote feed,
+  news feeds, top trades
+  Pub/Sub to WDS
+end note
+
+note bottom of Processor
+  Concurrency Model
+  Semaphore limit: 500
+  Async processing
+  Horizontal scaling
+  Stateless design
+end note
+
+note bottom of Listener
+  Reconnection Strategy
+  Market-aware
+  Auto-reconnect
+  60s polling (closed)
+  Health tracking
+end note
+
+note as DeploymentNote
+  Deployment: Kubernetes + Docker
+  Independent scaling per component
+  Data plane: internal network only
+  WDS: exposed to clients
+  SCP: external access
+end note
+
+@enduml

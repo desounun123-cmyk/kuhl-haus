@@ -1,0 +1,333 @@
+---
+- name: Deploy Market Data Queues (RabbitMQ)
+  hosts: all
+  gather_facts: true
+  become: true
+  become_user: stack
+
+  tasks:
+    - name: Set runtime facts for Python interpreter
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: /opt/ansible/venv/bin/python
+        ansible_python_venv_dir: /opt/ansible/venv
+
+    # RabbitMQ Credentials Secret
+    - name: Create RabbitMQ credentials secret
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: mdp-market-data-queues-secret
+            namespace: "{{ data_plane_namespace }}"
+          stringData:
+            RABBITMQ_URL: "amqp://{{ rabbitmq_user }}:{{ rabbitmq_password }}@mdp-market-data-queues.{{ data_plane_namespace }}.svc.cluster.local:{{ rabbitmq_node_port }}//"
+            RABBITMQ_DEFAULT_USER: "{{ rabbitmq_user }}"
+            RABBITMQ_DEFAULT_PASS: "{{ rabbitmq_password }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      no_log: true
+
+    # RabbitMQ Configuration
+    - name: Create RabbitMQ configuration ConfigMap
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: mdp-market-data-queues-config
+            namespace: "{{ data_plane_namespace }}"
+          data:
+            enabled_plugins: |
+              [rabbitmq_management,rabbitmq_prometheus,rabbitmq_management_agent,rabbitmq_web_dispatch].
+            20-management_agent.disable_metrics_collector.conf: |
+              management_agent.disable_metrics_collector = false
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # RabbitMQ Headless Service
+    - name: Create RabbitMQ headless service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: mdp-market-data-queues-headless
+            namespace: "{{ data_plane_namespace }}"
+            labels:
+              app: mdp-market-data-queues
+          spec:
+            clusterIP: None
+            selector:
+              app: mdp-market-data-queues
+            ports:
+              - name: amqp
+                port: "{{ rabbitmq_node_port }}"
+                targetPort: "{{ rabbitmq_node_port }}"
+                protocol: TCP
+              - name: management
+                port: "{{ rabbitmq_management_port }}"
+                targetPort: "{{ rabbitmq_management_port }}"
+                protocol: TCP
+              - name: dist
+                port: "{{ rabbitmq_dist_port }}"
+                targetPort: "{{ rabbitmq_dist_port }}"
+                protocol: TCP
+              - name: epmd
+                port: "{{ rabbitmq_erl_epmd_port }}"
+                targetPort: "{{ rabbitmq_erl_epmd_port }}"
+                protocol: TCP
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # RabbitMQ ClusterIP Service
+    - name: Create RabbitMQ service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: mdp-market-data-queues
+            namespace: "{{ data_plane_namespace }}"
+          spec:
+            type: ClusterIP
+            selector:
+              app: mdp-market-data-queues
+            ports:
+              - name: amqp
+                port: "{{ rabbitmq_node_port }}"
+                targetPort: "{{ rabbitmq_node_port }}"
+                protocol: TCP
+              - name: management
+                port: "{{ rabbitmq_management_port }}"
+                targetPort: "{{ rabbitmq_management_port }}"
+                protocol: TCP
+              - name: dist
+                port: "{{ rabbitmq_dist_port }}"
+                targetPort: "{{ rabbitmq_dist_port }}"
+                protocol: TCP
+              - name: epmd
+                port: "{{ rabbitmq_erl_epmd_port }}"
+                targetPort: "{{ rabbitmq_erl_epmd_port }}"
+                protocol: TCP
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # RabbitMQ Deployment (ephemeral storage)
+    - name: Create RabbitMQ Deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: mdp-market-data-queues
+            namespace: "{{ data_plane_namespace }}"
+          spec:
+            replicas: "{{ mdq_replicas | default(1) }}"
+            selector:
+              matchLabels:
+                app: mdp-market-data-queues
+            strategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxSurge: 1
+                maxUnavailable: 0
+            template:
+              metadata:
+                labels:
+                  app: mdp-market-data-queues
+              spec:
+                containers:
+                  - name: rabbitmq
+                    image: "{{ rabbitmq_image }}"
+                    imagePullPolicy: "{{ rabbitmq_image_pull_policy }}"
+                    ports:
+                      - containerPort: "{{ rabbitmq_node_port }}"
+                        name: amqp
+                      - containerPort: "{{ rabbitmq_management_port }}"
+                        name: management
+                      - containerPort: "{{ rabbitmq_dist_port }}"
+                        name: dist
+                      - containerPort: "{{ rabbitmq_erl_epmd_port }}"
+                        name: epmd
+                    volumeMounts:
+                      - name: config-volume
+                        mountPath: /etc/rabbitmq/enabled_plugins
+                        subPath: enabled_plugins
+                      - name: metrics-config
+                        mountPath: /etc/rabbitmq/conf.d/20-management_agent.disable_metrics_collector.conf
+                        subPath: 20-management_agent.disable_metrics_collector.conf
+                      - name: rabbitmq-data
+                        mountPath: /var/lib/rabbitmq
+                    envFrom:
+                      - secretRef:
+                          name: mdp-market-data-queues-secret
+                    env:
+                      - name: LOG_LEVEL
+                        value: "{{ mdq_server_log_level | default('info') }}"
+                      - name: TZ
+                        value: "{{ container_timezone }}"
+                      - name: RABBITMQ_NODE_PORT
+                        value: "{{ rabbitmq_node_port | string }}"
+                      - name: RABBITMQ_DIST_PORT
+                        value: "{{ rabbitmq_dist_port | string }}"
+                      - name: ERL_EPMD_PORT
+                        value: "{{ rabbitmq_erl_epmd_port | string }}"
+                      - name: RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS
+                        value: "-rabbit deprecated_features_permit management_metrics_collection true"
+                      - name: POD_NAME
+                        valueFrom:
+                          fieldRef:
+                            fieldPath: metadata.name
+                    readinessProbe:
+                      exec:
+                        command:
+                          - rabbitmq-diagnostics
+                          - -q
+                          - ping
+                      initialDelaySeconds: 20
+                      periodSeconds: 10
+                      timeoutSeconds: 5
+                      successThreshold: 1
+                      failureThreshold: 3
+                    livenessProbe:
+                      exec:
+                        command:
+                          - rabbitmq-diagnostics
+                          - -q
+                          - status
+                      initialDelaySeconds: 60
+                      periodSeconds: 30
+                      timeoutSeconds: 10
+                      successThreshold: 1
+                      failureThreshold: 3
+                    resources:
+                      requests:
+                        cpu: "{{ rabbitmq_cpu_min | default('500m') }}"
+                        memory: "{{ rabbitmq_memory_min | default('512Mi') }}"
+                      limits:
+                        cpu: "{{ rabbitmq_cpu_max | default('2000m') }}"
+                        memory: "{{ rabbitmq_memory_max | default('2Gi') }}"
+                volumes:
+                  - name: config-volume
+                    configMap:
+                      name: mdp-market-data-queues-config
+                  - name: metrics-config
+                    configMap:
+                      name: mdp-market-data-queues-config
+                  - name: rabbitmq-data
+                    emptyDir: {}
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # RabbitMQ Ingress
+    - name: Create RabbitMQ Ingress for management UI
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: mdp-market-data-queues
+            namespace: "{{ data_plane_namespace }}"
+            annotations:
+              cert-manager.io/issuer: "{{ app_cert_issuer }}"
+              nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          spec:
+            ingressClassName: "{{ app_ingress_class }}"
+            tls:
+              - hosts:
+                  - "{{ mdq_server_domain }}"
+                secretName: mdp-market-data-queues-tls
+            rules:
+              - host: "{{ mdq_server_domain }}"
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: mdp-market-data-queues
+                          port:
+                            number: "{{ rabbitmq_management_port }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Wait for RabbitMQ to be ready
+    - name: Wait for RabbitMQ Deployment to be ready
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ data_plane_namespace }}"
+        label_selectors:
+          - app=mdp-market-data-queues
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Get pod for verification
+    - name: Get RabbitMQ pod name
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ data_plane_namespace }}"
+        label_selectors:
+          - app=mdp-market-data-queues
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: rabbitmq_pods
+
+    # Verify RabbitMQ connectivity
+    - name: Test RabbitMQ connectivity
+      kubernetes.core.k8s_exec:
+        namespace: "{{ data_plane_namespace }}"
+        pod: "{{ rabbitmq_pods.resources[0].metadata.name }}"
+        command: rabbitmq-diagnostics -q check_running
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: rabbitmq_check
+      failed_when: rabbitmq_check.rc != 0
+      retries: 3
+      delay: 5
+      until: rabbitmq_check is succeeded
+      when: rabbitmq_pods.resources | length > 0
+
+    # Verify certificate issuance
+    - name: Wait for TLS certificate to be issued
+      kubernetes.core.k8s_info:
+        kind: Certificate
+        name: mdp-market-data-queues-tls
+        namespace: "{{ data_plane_namespace }}"
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: cert_status
+      retries: 3
+      delay: 30
+      until: cert_status is succeeded
+
+    # Display deployment summary
+    - name: Display deployment summary
+      debug:
+        msg:
+          - "=== RabbitMQ Deployment Complete ==="
+          - "Service: mdp-market-data-queues"
+          - "Namespace: {{ data_plane_namespace }}"
+          - "AMQP Endpoint: mdp-market-data-queues.{{ data_plane_namespace }}.svc.cluster.local:{{ rabbitmq_node_port }}"
+          - "Management UI: https://{{ mdq_server_domain }}"
+          - "Storage: Ephemeral (emptyDir)"
+          - ""
+          - "Verify with:"
+          - "  kubectl get pods -n {{ data_plane_namespace }} -l app=mdp-market-data-queues"
+          - "  kubectl get deployment mdp-market-data-queues -n {{ data_plane_namespace }}"

@@ -1,0 +1,180 @@
+# group_vars/all/all.yml
+ansible_user: stack
+ansible_ssh_host_key_checking: false
+# ansible_python_interpreter: /opt/ansible/venv/bin/python
+# ansible_python_venv_dir: /opt/ansible/venv
+
+# Kubernetes settings
+manifests_dir: /home/stack/mdp
+app_name: mdp
+app_namespace: mdp-app
+data_plane_namespace: mdp-data-plane
+
+# ACME AWS
+acme_aws_prod_issuer: acme-route53-prod
+acme_aws_region: us-west-2
+acme_route53_access_key_id: "{{ acme_prod_route53_access_key_id }}"
+acme_route53_secret_access_key: "{{ acme_prod_route53_secret_access_key }}"
+# ACME Cloudflare 
+cloudflare_acme_prod_issuer: acme-cloudflare-prod
+cloudflare_dns_api_token: "{{ cloudflare_prod_dns_api_token  }}"
+cloudflare_global_api_key: "{{ cloudflare_prod_global_api_key }}"
+
+# Google OAuth
+google_client_id: "{{ google_oauth_client_id }}"
+google_client_secret: "{{ google_oauth_client_secret }}"
+
+# Container Image Repositories
+dev_container_repo: ghcr.io/kuhl-haus
+ppe_container_repo: ghcr.io/kuhl-haus
+prod_container_repo: ghcr.io/kuhl-haus
+
+# DB
+database_container_image: docker.io/pgvector/pgvector:pg15
+db_storage_size: 10Gi
+db_storage_class: hostpath
+database_credentials_secret_name: "{{ app_namespace }}-database-credentials"
+postgres_user: "{{ app_name }}"
+postgres_db: "{{ app_name }}"
+
+# Common
+container_timezone: UTC
+
+# Market Data Front-End App
+app_container_port: 8000
+app_config_path: /app/config
+app_ingress_class: nginx
+app_logs_path: /var/log/mdp
+app_secret_name: "{{ app_name }}-secrets"
+app_server_cpu_min: "500m"
+app_server_cpu_max: "2000m"
+app_server_memory_min: "512Mi"
+app_server_memory_max: "2Gi"
+app_storage_class: hostpath
+app_storage_size: 10Gi
+
+# Financial Data Providers
+massive_realtime_url: "wss://socket.massive.com/stocks"
+massive_delayed_url: "wss://delayed.massive.com/stocks"
+massive_api_key: "{{ prod_massive_api_key }}"
+massive_s3_endpoint: "https://files.massive.com"
+massive_s3_bucket: "flatfiles"
+massive_s3_access_key: "{{ prod_massive_s3_access_key }}"
+massive_s3_secret_key: "{{ prod_massive_s3_secret_key }}"
+
+# Market Data Cache (Redis)
+redis_image: redis/redis-stack:latest
+redis_storage_size: 20Gi
+redis_memory_min: "2Gi"
+redis_memory_max: "4Gi"
+redis_cpu_min: "2000m"
+redis_cpu_max: "4000m"
+redis_port: 6379
+redis_insight_port: 8001
+
+# Market Data Listener
+mdl_server_name: mdp-listener
+mdl_server_container_port: 4200
+mdl_server_replicas: 1
+mdl_server_ingress_class: nginx
+mdl_server_storage_size: 10Gi
+mdl_server_storage_class: hostpath
+mdl_server_log_level: INFO
+mdl_server_secret_name: "{{ mdl_server_name }}-secrets"
+mdl_server_cert_issuer: "{{ acme_aws_prod_issuer }}"
+mdl_server_cpu_min: "2000m"
+mdl_server_cpu_max: "8000m"
+mdl_server_memory_min: "2Gi"
+mdl_server_memory_max: "16Gi"
+massive_subscriptions:
+  - "A.*"
+
+# Market Data Processor
+mdp_server_name: mdp-processor
+mdp_server_container_port: 4201
+mdp_server_replicas: 1
+mdp_server_ingress_class: nginx
+mdp_server_storage_size: 10Gi
+mdp_server_storage_class: hostpath
+mdp_server_log_level: INFO
+mdp_server_secret_name: "{{ mdp_server_name }}-secrets"
+mdp_server_cert_issuer: "{{ acme_aws_prod_issuer }}"
+mdp_server_cpu_min: "2000m"
+mdp_server_cpu_max: "8000m"
+mdp_server_memory_min: "2Gi"
+mdp_server_memory_max: "16Gi"
+
+# Market Data Queues (RabbitMQ)
+mdq_replicas: 1
+mdq_server_log_level: INFO
+rabbitmq_user: "{{ app_name }}"
+rabbitmq_storage_size: 10Gi
+rabbitmq_storage_class: hostpath
+rabbitmq_node_port: 5672
+rabbitmq_management_port: 15672
+rabbitmq_dist_port: 25672
+rabbitmq_erl_epmd_port: 4369
+rabbitmq_image: rabbitmq:latest
+rabbitmq_image_pull_policy: IfNotPresent
+rabbitmq_cpu_min: "1000m"
+rabbitmq_cpu_max: "4000m"
+rabbitmq_memory_min: "512Mi"
+rabbitmq_memory_max: "2Gi"
+
+# Widget Data Service
+wds_server_name: wds
+wds_server_container_port: 4202
+wds_server_replicas: 1
+wds_server_ingress_class: nginx
+wds_server_storage_size: 10Gi
+wds_server_storage_class: hostpath
+wds_server_log_level: INFO
+wds_server_secret_name: "{{ wds_server_name }}-secrets"
+wds_server_cert_issuer: "{{ acme_aws_prod_issuer }}"
+wds_server_cpu_min: "250m"
+wds_server_cpu_max: "2000m"
+wds_server_memory_min: "256Mi"
+wds_server_memory_max: "2Gi"
+
+# Finlight Data Listener
+fdl_server_name: fdl
+fdl_server_container_port: 4203
+fdl_server_replicas: 1
+fdl_server_ingress_class: nginx
+fdl_server_log_level: INFO
+fdl_server_secret_name: "{{ fdl_server_name }}-secrets"
+fdl_server_cert_issuer: "{{ acme_aws_prod_issuer }}"
+fdl_server_cpu_min: "250m"
+fdl_server_cpu_max: "1000m"
+fdl_server_memory_min: "256Mi"
+fdl_server_memory_max: "1Gi"
+market_data_listener_auto_start_enabled: "true"
+fdl_include_entities: "true"
+
+# Market Data Scanner
+mds_server_name: mds
+mds_server_namespace: "{{ data_plane_namespace }}"
+mds_server_container_port: 4205
+mds_server_replicas: 1
+mds_server_ingress_class: nginx
+mds_server_log_level: INFO
+mds_server_secret_name: "{{ mds_server_name }}-secrets"
+mds_server_cert_issuer: "{{ acme_aws_prod_issuer }}"
+mds_server_cpu_min: "500m"
+mds_server_cpu_max: "2000m"
+mds_server_memory_min: "256Mi"
+mds_server_memory_max: "2Gi"
+mds_dra_cache_list_max: 10000
+
+# Finlight Data Processor
+fdp_server_name: fdp
+fdp_server_container_port: 4204
+fdp_server_replicas: 1
+fdp_server_ingress_class: nginx
+fdp_server_log_level: INFO
+fdp_server_secret_name: "{{ fdp_server_name }}-secrets"
+fdp_server_cert_issuer: "{{ acme_aws_prod_issuer }}"
+fdp_server_cpu_min: "250m"
+fdp_server_cpu_max: "1000m"
+fdp_server_memory_min: "256Mi"
+fdp_server_memory_max: "1Gi"

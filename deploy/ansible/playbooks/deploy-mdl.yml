@@ -1,0 +1,256 @@
+---
+- name: Deploy Market Data Listener Server
+  hosts: all
+  gather_facts: true
+  become: true
+  become_user: stack
+
+  tasks:
+    - name: Set runtime facts for Python interpreter
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: /opt/ansible/venv/bin/python
+        ansible_python_venv_dir: /opt/ansible/venv
+
+    # MDL Server Secrets
+    - name: Create Market Data Listener secrets
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ mdl_server_secret_name }}"
+            namespace: "{{ data_plane_namespace }}"
+          stringData:
+            RABBITMQ_API: "https://{{ rabbitmq_user }}:{{ rabbitmq_password }}@{{ mdq_server_domain }}/api/"
+            RABBITMQ_URL: "amqp://{{ rabbitmq_user }}:{{ rabbitmq_password }}@mdp-market-data-queues.{{ data_plane_namespace }}.svc.cluster.local:{{ rabbitmq_node_port }}//"
+            RABBITMQ_USER: "{{ rabbitmq_user }}"
+            RABBITMQ_PASS: "{{ rabbitmq_password }}"
+            MASSIVE_API_KEY: "{{ massive_api_key }}"
+            OTEL_EXPORTER_OTLP_ENDPOINT: "{{ otel_exporter_otlp_endpoint }}"
+            OTEL_EXPORTER_OTLP_HEADERS: "{{ otel_exporter_otlp_headers }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      no_log: true
+
+    # MDL Server Deployment
+    - name: Create Market Data Listener Deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ mdl_server_name }}"
+            namespace: "{{ data_plane_namespace }}"
+          spec:
+            replicas: "{{ mdl_server_replicas }}"
+            selector:
+              matchLabels:
+                app: "{{ mdl_server_name }}"
+            strategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxSurge: 1
+                maxUnavailable: 0
+            template:
+              metadata:
+                labels:
+                  app: "{{ mdl_server_name }}"
+              spec:
+                containers:
+                  - name: "{{ mdl_server_name }}"
+                    image: "{{ mdl_server_image }}"
+                    imagePullPolicy: "{{ image_pull_policy }}"
+                    ports:
+                      - containerPort: "{{ mdl_server_container_port }}"
+                        name: http
+                    livenessProbe:
+                      httpGet:
+                        path: /health
+                        port: "{{ mdl_server_container_port }}"
+                      initialDelaySeconds: 30
+                      periodSeconds: 15
+                      timeoutSeconds: 5
+                      successThreshold: 1
+                      failureThreshold: 3
+                    readinessProbe:
+                      httpGet:
+                        path: /health
+                        port: "{{ mdl_server_container_port }}"
+                      initialDelaySeconds: 30
+                      periodSeconds: 15
+                      timeoutSeconds: 10
+                      successThreshold: 1
+                      failureThreshold: 20
+                    envFrom:
+                      - secretRef:
+                          name: "{{ mdl_server_secret_name }}"
+                    env:
+                      - name: LOG_LEVEL
+                        value: "{{ mdl_server_log_level }}"
+                      - name: CONTAINER_IMAGE
+                        value: "{{ mdl_server_image }}"
+                      - name: IMAGE_VERSION
+                        value: "{{ app_container_image_version }}"
+                      - name: TZ
+                        value: "{{ container_timezone }}"
+                      - name: POD_NAME
+                        valueFrom:
+                          fieldRef:
+                            fieldPath: metadata.name
+                      - name: MARKET_DATA_LISTENER_AUTO_START_ENABLED
+                        value: "{{ market_data_listener_auto_start_enabled | string }}"
+                      - name: MASSIVE_SUBSCRIPTIONS
+                        value: '{{ massive_subscriptions | to_json }}'
+                      - name: OTEL_SERVICE_NAME
+                        value: "mdl"
+                      - name: OTEL_TRACES_EXPORTER
+                        value: "{{ otel_traces_exporter }}"
+                      - name: OTEL_METRICS_EXPORTER
+                        value: "{{ otel_metrics_exporter }}"
+                      - name: OTEL_LOGS_EXPORTER
+                        value: "{{ otel_logs_exporter }}"
+                      - name: OTEL_LOG_LEVEL
+                        value: "{{ otel_log_level }}"
+                      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+                        value: "{{ otel_exporter_otlp_protocol}}"
+                    resources:
+                      requests:
+                        cpu: "{{ mdl_server_cpu_min | default('250m') }}"
+                        memory: "{{ mdl_server_memory_min | default('256Mi') }}"
+                      limits:
+                        cpu: "{{ mdl_server_cpu_max | default('1000m') }}"
+                        memory: "{{ mdl_server_memory_max | default('1Gi') }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # MDL Server Service
+    - name: Create Market Data Listener service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ mdl_server_name }}"
+            namespace: "{{ data_plane_namespace }}"
+          spec:
+            type: ClusterIP
+            ports:
+              - port: "{{ mdl_server_container_port }}"
+                targetPort: "{{ mdl_server_container_port }}"
+                protocol: TCP
+                name: http
+            selector:
+              app: "{{ mdl_server_name }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # MDL Server Ingress
+    - name: Create Market Data Listener Ingress
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: "{{ mdl_server_name }}"
+            namespace: "{{ data_plane_namespace }}"
+            annotations:
+              cert-manager.io/issuer: "{{ mdl_server_cert_issuer }}"
+              nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          spec:
+            ingressClassName: "{{ mdl_server_ingress_class }}"
+            tls:
+              - hosts:
+                  - "{{ mdl_server_domain }}"
+                secretName: "{{ mdl_server_name }}-tls"
+            rules:
+              - host: "{{ mdl_server_domain }}"
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: "{{ mdl_server_name }}"
+                          port:
+                            number: "{{ mdl_server_container_port }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Wait for MDL to be ready
+    - name: Wait for Market Data Listener to be ready
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ data_plane_namespace }}"
+        label_selectors:
+          - app={{ mdl_server_name }}
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Verify MDL connectivity
+    - name: Test Market Data Listener health endpoint
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ data_plane_namespace }}"
+        label_selectors:
+          - app={{ mdl_server_name }}
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: mdl_pods
+
+    - name: Check MDL health
+      kubernetes.core.k8s_exec:
+        namespace: "{{ data_plane_namespace }}"
+        pod: "{{ mdl_pods.resources[0].metadata.name }}"
+        command: curl -f http://localhost:{{ mdl_server_container_port }}/health
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: mdl_health
+      failed_when: mdl_health.rc != 0
+      retries: 3
+      delay: 5
+      until: mdl_health is succeeded
+      when: mdl_pods.resources | length > 0
+
+    # Verify certificate issuance
+    - name: Wait for TLS certificate to be issued
+      kubernetes.core.k8s_info:
+        kind: Certificate
+        name: "{{ mdl_server_name }}-tls"
+        namespace: "{{ data_plane_namespace }}"
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: cert_status
+      retries: 3
+      delay: 30
+      until: cert_status is succeeded
+
+    # Display deployment summary
+    - name: Display deployment summary
+      debug:
+        msg:
+          - "=== Market Data Listener Deployment Complete ==="
+          - "Service: {{ mdl_server_name }}"
+          - "Namespace: {{ data_plane_namespace }}"
+          - "API Endpoint: https://{{ mdl_server_domain }}"
+          - ""
+          - "Dependencies:"
+          - "  - RabbitMQ: mdp-market-data-queues.{{ data_plane_namespace }}.svc.cluster.local:{{ rabbitmq_node_port }}"
+          - "  - Redis: mdp-redis.{{ data_plane_namespace }}.svc.cluster.local:{{ redis_port }}"
+          - ""
+          - "Verify with:"
+          - "  kubectl get pods -n {{ data_plane_namespace }} -l app={{ mdl_server_name }}"
+          - "  curl https://{{ mdl_server_domain }}/health"

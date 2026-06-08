@@ -1,0 +1,222 @@
+services:
+  mdc:
+    image: redis/redis-stack:latest
+    container_name: mdc
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    environment:
+      REDIS_PASSWORD: redis
+    volumes:
+      - mdc_data:/data
+    networks:
+      - data_plane
+    restart: unless-stopped
+  mdq:
+    image: docker.io/rabbitmq:latest
+    container_name: mdq
+    ports:
+      - "0.0.0.0:5672:5672"
+      - "0.0.0.0:15672:15672"
+      - "0.0.0.0:25672:25672"
+      - "0.0.0.0:4369:4369"
+    networks:
+      - data_plane
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: mdq
+      RABBITMQ_DEFAULT_PASS: mdq
+      RABBITMQ_ENABLED_PLUGINS: "rabbitmq_management,rabbitmq_prometheus,rabbitmq_management_agent,rabbitmq_web_dispatch"
+    volumes:
+      - mdq_data:/var/lib/rabbitmq
+
+  mdl:
+    image: ghcr.io/kuhl-haus/kuhl-haus-mdl-server:latest
+    container_name: mdl
+    ports:
+      - "0.0.0.0:4200:4200"
+    networks:
+      - data_plane
+    environment:
+      MASSIVE_API_KEY: 'f0cd72b1-1036-4fcf-a7ac-79c803c03506'
+      RABBITMQ_URL: amqp://mdq:mdq@mdq:5672/%2F
+      MARKET_DATA_MESSAGE_TTL: 5000
+      MARKET_DATA_LISTENER_AUTO_START_ENABLED: True
+      MASSIVE_SUBSCRIPTIONS: '["A.*"]'
+    depends_on:
+      - mdq
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4200/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mdp:
+    image: ghcr.io/kuhl-haus/kuhl-haus-mdp-server:latest
+    container_name: mdp
+    ports:
+      - "0.0.0.0:4201:4201"
+    networks:
+      - data_plane
+    environment:
+      MASSIVE_API_KEY: 'f0cd72b1-1036-4fcf-a7ac-79c803c03506'
+      REDIS_URL: redis://mdc:6379/0
+      RABBITMQ_URL: amqp://mdq:mdq@mdq:5672/%2F
+    depends_on:
+      - mdc
+      - mdq
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4201/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  wds:
+    image: ghcr.io/kuhl-haus/kuhl-haus-wds-server:latest
+    container_name: wds
+    ports:
+      - "0.0.0.0:4202:4202"
+    networks:
+      - data_plane
+    environment:
+      AUTH_ENABLED: True
+      AUTH_API_KEY: "3f3d9a40584329d39f4a62a839b60b96c4784eab28e86039b2dfa9c1a622eb39"
+      REDIS_URL: redis://mdc:6379/0
+    depends_on:
+      - mdc
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4202/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  fdl:
+    image: ghcr.io/kuhl-haus/kuhl-haus-fdl-server:latest
+    container_name: fdl
+    ports:
+      - "0.0.0.0:4203:4203"
+    networks:
+      - data_plane
+    environment:
+      FINLIGHT_API_KEY: 'sk_58b0ba20c1e14a5877b56577f4934706272ca9cd3690b5f618f7719a67aa776f'
+      RABBITMQ_URL: amqp://mdq:mdq@mdq:5672/%2F
+      MARKET_DATA_MESSAGE_TTL: 5000
+      MDQ_PUBLISHER_CONFIRMS: true
+      FDL_AUTO_START_ENABLED: true
+      FINLIGHT_INCLUDE_ENTITIES: true
+      # FINLIGHT_QUERY: 'earnings catalyst'  # Optional: full-text filter for incoming articles
+      # FINLIGHT_LANGUAGE: en               # Optional: ISO 639-1 language filter
+      # FINLIGHT_RAW: false                 # Set true to receive raw (unprocessed) article feed
+    depends_on:
+      - mdq
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4203/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  fdp:
+    image: ghcr.io/kuhl-haus/kuhl-haus-fdp-server:latest
+    container_name: fdp
+    ports:
+      - "0.0.0.0:4204:4204"
+    networks:
+      - data_plane
+    environment:
+      RABBITMQ_URL: amqp://mdq:mdq@mdq:5672/%2F
+      MDC_REDIS_URL: redis://mdc:6379/0
+      WDC_REDIS_URL: redis://mdc:6379/1
+      FINLIGHT_API_KEY: 'sk_58b0ba20c1e14a5877b56577f4934706272ca9cd3690b5f618f7719a67aa776f'
+      FDP_QUEUE_NAME: news
+      PREFETCH_COUNT: 100
+      MAX_CONCURRENCY: 500
+      NEWS_FEED_LIST_MAX: 10000
+      NEWS_TICKER_LIST_MAX: 100
+      NEWS_FEED_CACHE_TTL: 172800
+      NEWS_TICKER_CACHE_TTL: 604800
+    depends_on:
+      - mdc
+      - mdq
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4204/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mds:
+    image: ghcr.io/kuhl-haus/kuhl-haus-mds-server:latest
+    container_name: mds
+    ports:
+      - "0.0.0.0:4205:4205"
+    networks:
+      - data_plane
+    environment:
+      WDC_REDIS_URL: redis://mdc:6379/1
+      DRA_CACHE_LIST_MAX: 1000
+      # MASSIVE_API_KEY: ''  # Required only if using analyzers that call the Massive API directly
+    depends_on:
+      - mdc
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4205/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  scp:
+    user: "999:999"
+    container_name: scp
+    image: ghcr.io/kuhl-haus/kuhl-haus-mdp-app-server:latest
+    networks:
+      - scp
+      - data_plane
+    restart: unless-stopped
+    environment:
+      DEFAULT_LOGIN_ENABLED: true
+      WDS_ENDPOINT: "ws://localhost:4202/ws"
+      WDS_API_KEY: "3f3d9a40584329d39f4a62a839b60b96c4784eab28e86039b2dfa9c1a622eb39"
+    depends_on:
+      - wds
+    stdin_open: true
+    tty: true
+    ports:
+      - "0.0.0.0:8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    volumes:
+      - scp_default_db:/home/py4web/apps/_default/databases/
+      - scp_default_uploads:/home/py4web/apps/_default/uploads/
+volumes:
+  mdc_data:
+  mdq_data:
+  scp_default_db:
+  scp_default_uploads:
+
+networks:
+  data_plane:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.29.13.0/24
+          ip_range: 172.29.13.128/25
+          gateway: 172.29.13.1
+  scp:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.31.13.0/24
+          ip_range: 172.31.13.128/25
+          gateway: 172.31.13.1

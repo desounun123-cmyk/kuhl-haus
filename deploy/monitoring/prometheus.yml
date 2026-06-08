@@ -1,0 +1,68 @@
+# global config
+global:
+  scrape_interval:     60s # By default, scrape targets every 15 seconds.
+  evaluation_interval: 60s # By default, scrape targets every 15 seconds.
+  # scrape_timeout is set to the global default (10s).
+ 
+  # Attach these labels to any time series or alerts when communicating with
+  # external systems (federation, remote storage, Alertmanager).
+  external_labels:
+    monitor: 'prometheus'
+
+scrape_configs:
+  - job_name: 'kuhl-haus-mdl'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /probe
+    params:
+      module: [mdl_health]
+    static_configs:
+      - targets:
+        - https://mdl.example.com/health
+        labels:
+          environment: prod
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 192.168.8.125:7979
+
+  - job_name: 'kuhl-haus-mdp'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /probe
+    params:
+      module: [mdp_health]
+    static_configs:
+      - targets:
+        - https://mdp.example.com/health
+        labels:
+          environment: prod
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 192.168.8.125:7979
+
+  - job_name: 'kuhl-haus-wds'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /probe
+    params:
+      module: [wds_health]
+    static_configs:
+      - targets:
+        - https://wds.example.com/health
+        labels:
+          environment: prod
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 192.168.8.125:7979

@@ -1,0 +1,30 @@
+name: Publish App Image
+
+on:
+  push:
+    paths:
+      - 'packages/app/**'
+      - 'packages/mdp/**'
+    branches: [main, mainline]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: packages/app/app.Dockerfile
+          push: true
+          tags: ghcr.io/kuhl-haus/kuhl-haus-mdp-app-server:latest

@@ -1,0 +1,43 @@
+version: "3.8"
+networks:
+  prometheus:
+    driver: bridge
+
+services:
+  json-exporter:
+    image: quay.io/prometheuscommunity/json-exporter:latest
+    container_name: json_exporter
+    restart: unless-stopped
+    networks:
+      - prometheus
+    ports:
+      - "7979:7979"
+    environment:
+    # Specify your user ID and group ID. You can find this by running `id -u` and `id -g`
+      - UID=65534
+      - GID=65534
+    volumes:
+      - ./json_exporter_config.yml:/config.yml:rw
+    command:
+      - '--config.file=/config.yml'
+
+  prometheus:
+    # https://github.com/prometheus/prometheus
+    image: prom/prometheus
+    container_name: prometheus_app
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:rw
+      - prometheus_data:/prometheus:rw
+    networks:
+      - prometheus
+    ports:
+      - 9090:9090
+    environment:
+      - NODE_ENV=production
+    # Specify your user ID and group ID. You can find this by running `id -u` and `id -g`
+      - UID=65534
+      - GID=65534
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:

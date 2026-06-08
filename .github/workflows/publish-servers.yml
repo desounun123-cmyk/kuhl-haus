@@ -1,0 +1,34 @@
+name: Publish Server Images
+
+on:
+  push:
+    paths:
+      - 'packages/servers/**'
+      - 'packages/mdp/**'
+    branches: [main, mainline]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        server: [mdl, mdp, lba, wds, fdl, fdp, mds]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: packages/servers/${{ matrix.server }}.Dockerfile
+          push: true
+          tags: ghcr.io/kuhl-haus/${{ matrix.server }}-server:latest

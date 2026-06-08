@@ -1,0 +1,360 @@
+format_version: 10
+common:
+  pipeline-group: &pipeline_group "Kuhl-Haus-MDP"
+  pipeline-label: &pipeline_label ${COUNT}
+  pipeline-lock-behavior: &pipeline_lock_behavior unlockWhenFinished
+
+  # Materials
+  mdp-app-repo: &mdp_app_repo
+    git: https://github.com/kuhl-haus/kuhl-haus-mdp-app
+    username: YOUR-USER-NAME
+    shallow_clone: false
+    auto_update: true
+    branch: mainline
+    encrypted_password: YOUR-GOCD-ENCRYPTED-PERSONAL-ACCESS-TOKEN
+    destination: kuhl-haus-mdp-app
+  mdp-servers-repo: &mdp_servers_repo
+    git: https://github.com/kuhl-haus/kuhl-haus-mdp-servers
+    username: YOUR-USER-NAME
+    shallow_clone: false
+    auto_update: true
+    branch: mainline
+    encrypted_password: YOUR-GOCD-ENCRYPTED-PERSONAL-ACCESS-TOKEN
+    destination: kuhl-haus-mdp-servers
+  mdp-deploy-repo: &mdp_deploy_repo
+    git: https://github.com/YOUR-USER-NAME/kuhl-haus-mdp-deployment
+    username: YOUR-USER-NAME
+    shallow_clone: true
+    auto_update: true
+    branch: mainline
+    encrypted_password: YOUR-GOCD-ENCRYPTED-PERSONAL-ACCESS-TOKEN
+    destination: deploy
+
+
+  ## Build and Push Docker Images
+  pre-reqs-and-k8s-infra: &pre_reqs_and_k8s_infra
+    fetch_materials: true
+    keep_artifacts: true
+    clean_workspace: true
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - ls
+            - -hal
+        - exec:
+            arguments:
+            - -c
+            - for f in ./deploy/scripts/*; do chmod +x $f; done
+            command: /bin/sh
+            run_if: passed
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/01-run-prereq-playbook.sh
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/02-run-k8s-infra-playbook.sh
+  
+  ## Application
+  run-deploy-app-playbook: &run_deploy_app_playbook
+    fetch_materials: true
+    keep_artifacts: true
+    clean_workspace: true
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            arguments:
+            - -c
+            - for f in ./deploy/scripts/*; do chmod +x $f; done
+            command: /bin/sh
+            run_if: passed
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/03-run-app-playbook.sh
+  smoke-test-app: &smoke_test_app
+    fetch_materials: false
+    keep_artifacts: false
+    clean_workspace: false
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/smoke-test-app.sh  
+  
+  ## Data Plane
+  run-data-plane-certificate-manager-playbook: &run_data_plane_certificate_manager_playbook
+    fetch_materials: false
+    keep_artifacts: false
+    clean_workspace: false
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/04-run-data-plane-playbook.sh
+            - deploy-dp-cm.yml
+  run-market-data-cache-playbook: &run_market_data_cache_playbook
+    fetch_materials: false
+    keep_artifacts: false
+    clean_workspace: false
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/04-run-data-plane-playbook.sh
+            - deploy-mdc.yml
+  run-market-data-listener-playbook: &run_market_data_listener_playbook
+    fetch_materials: false
+    keep_artifacts: false
+    clean_workspace: false
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/04-run-data-plane-playbook.sh
+            - deploy-mdl.yml
+  run-market-data-processor-playbook: &run_market_data_processor_playbook
+    fetch_materials: false
+    keep_artifacts: false
+    clean_workspace: false
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/04-run-data-plane-playbook.sh
+            - deploy-mdp.yml
+  run-market-data-queue-playbook: &run_market_data_queue_playbook
+    fetch_materials: false
+    keep_artifacts: false
+    clean_workspace: false
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/04-run-data-plane-playbook.sh
+            - deploy-mdq.yml
+  run-widget-data-service-playbook: &run_widget_data_service_playbook
+    fetch_materials: false
+    keep_artifacts: false
+    clean_workspace: false
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/04-run-data-plane-playbook.sh
+            - deploy-wds.yml
+
+  smoke-test-market-data-listener: &smoke_test_mdl
+    fetch_materials: false
+    keep_artifacts: false
+    clean_workspace: false
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/smoke-test-mdl.sh
+  smoke-test-market-data-queue: &smoke_test_mdq
+    fetch_materials: false
+    keep_artifacts: false
+    clean_workspace: false
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/smoke-test-mdq.sh
+  smoke-test-market-data-cache: &smoke_test_mdc
+    fetch_materials: false
+    keep_artifacts: false
+    clean_workspace: false
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/smoke-test-mdc.sh
+  smoke-test-market-data-processor: &smoke_test_mdp
+    fetch_materials: false
+    keep_artifacts: false
+    clean_workspace: false
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/smoke-test-mdp.sh
+  smoke-test-widget-data-service: &smoke_test_wds
+    fetch_materials: false
+    keep_artifacts: false
+    clean_workspace: false
+    approval:
+      type: success
+      allow_only_on_success: true
+    jobs:
+      run-scripts:
+        timeout: 0
+        run_instances: all
+        tasks:
+        - exec:
+            command: sudo
+            arguments:
+            - -EHn
+            - ./deploy/scripts/smoke-test-wds.sh
+environments:
+  kuhl-haus-mdp-example:
+    pipelines:
+      - kuhl-haus-mdp-example
+    environment_variables:
+      BASE_WORKING_DIR: "~/kuhl-haus"
+      APP_ENV: example
+      APP_DOMAIN: mdp.example.com
+      MDC_SERVER_DOMAIN: mdp-cache.example.com
+      MDL_SERVER_DOMAIN: mdp-listener.example.com
+      MDP_SERVER_DOMAIN: mdp-processor.example.com
+      MDQ_SERVER_DOMAIN: mdp-queues.example.com
+      WDS_SERVER_DOMAIN: wds.example.com
+
+pipelines:
+  kuhl-haus-mdp-example:
+    group: *pipeline_group
+    label_template: *pipeline_label
+    lock_behavior: *pipeline_lock_behavior
+    display_order: -1
+    materials:
+      kuhl-haus-mdp-app: *mdp_app_repo
+      kuhl-haus-mdp-servers: *mdp_servers_repo
+      kuhl-haus-mdp-deployment: *mdp_deploy_repo
+    stages:
+      # Idempotent but only needs to be run (successfully) once
+      - pre-reqs-and-k8s-infra: *pre_reqs_and_k8s_infra
+
+      # Application
+      - deploy-application: *run_deploy_app_playbook
+      - smoke-test-app: *smoke_test_app
+
+      # Data Plane: Certificate Manager
+      - deploy-data-plane-certificate-manager: *run_data_plane_certificate_manager_playbook
+      
+      # Data Plane: Cache
+      - deploy-market-data-cache: *run_market_data_cache_playbook
+      - smoke-test-mdc: *smoke_test_mdc
+      
+      # Data Plane: Queues
+      - deploy-market-data-queue: *run_market_data_queue_playbook
+      - smoke-test-mdq: *smoke_test_mdq
+
+      # Data Plane: Widget Data Service
+      - deploy-widget-data-service: *run_widget_data_service_playbook
+      - smoke-test-wds: *smoke_test_wds
+
+      # Data Plane: Market Data Listener
+      - deploy-market-data-listener: *run_market_data_listener_playbook
+      - smoke-test-mdl: *smoke_test_mdl
+
+      # Data Plane: Market Data Processor
+      - deploy-market-data-processor: *run_market_data_processor_playbook
+      - smoke-test-mdp: *smoke_test_mdp
+

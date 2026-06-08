@@ -1,0 +1,79 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "kuhl-haus-mdp"
+dynamic = ["version"]
+description = "Market data processing pipeline for stock market scanner"
+authors = [
+    { name = "Tom Pounders", email = "git@oldschool.engineer" },
+]
+readme = "README.rst"
+requires-python = ">=3.12"
+license = {file = "LICENSE.txt"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python"
+]
+dependencies = [
+    "aio-pika",
+    "fastapi",
+    "finlight-client",
+    "importlib_metadata",
+    "massive",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp",
+    "pydantic-settings",
+    "python-dotenv",
+    "python-json-logger>=2.0.0",
+    "redis",
+    "tenacity",
+    "tzdata",
+    "uvicorn[standard]",
+    "websockets",
+]
+
+[project.urls]
+Homepage = "https://github.com/kuhl-haus/kuhl-haus-mdp"
+Documentation = "https://kuhl-haus-mdp.readthedocs.io"
+Source = "https://github.com/kuhl-haus/kuhl-haus-mdp"
+Changelog = "https://github.com/kuhl-haus/kuhl-haus-mdp/blob/mainline/CHANGELOG.rst"
+Tracker = "https://github.com/kuhl-haus/kuhl-haus-mdp/issues"
+
+[project.optional-dependencies]
+testing = [
+    "setuptools",
+    "setuptools-scm",
+    "pdm",
+    "pdm-backend",
+    "flake8",
+    "pytest",
+    "pytest-cov",
+    "pytest-asyncio",
+]
+
+[tool.pdm]
+distribution = true
+version = { source = "scm" }
+
+[tool.pdm.build]
+package-dir = "src"
+includes = ["src/kuhl_haus"]
+
+[tool.pytest.ini_options]
+addopts = ["--verbose"]
+norecursedirs = ["dist", "build"]
+testpaths = ["tests"]
+
+[tool.flake8]
+max_line_length = 88
+extend_ignore = ["E203", "W503", "C901"]
+exclude = ["build", "dist", "docs/conf.py"]
+
+[tool.pyscaffold]
+version = "4.6"
+package = "mdp"
+extensions = ["namespace"]
+namespace = "kuhl_haus"

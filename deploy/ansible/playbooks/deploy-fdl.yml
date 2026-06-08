@@ -1,0 +1,230 @@
+---
+- name: Deploy Finlight Data Listener Server
+  hosts: all
+  gather_facts: true
+  become: true
+  become_user: stack
+
+  tasks:
+    - name: Set runtime facts for Python interpreter
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: /opt/ansible/venv/bin/python
+        ansible_python_venv_dir: /opt/ansible/venv
+
+    # FDL Server Secrets
+    - name: Create Finlight Data Listener secrets
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ fdl_server_secret_name }}"
+            namespace: "{{ data_plane_namespace }}"
+          stringData:
+            FINLIGHT_API_KEY: "{{ finlight_api_key }}"
+            RABBITMQ_URL: "amqp://{{ rabbitmq_user }}:{{ rabbitmq_password }}@mdp-market-data-queues.{{ data_plane_namespace }}.svc.cluster.local:{{ rabbitmq_node_port }}//"
+            OTEL_EXPORTER_OTLP_ENDPOINT: "{{ otel_exporter_otlp_endpoint }}"
+            OTEL_EXPORTER_OTLP_HEADERS: "{{ otel_exporter_otlp_headers }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      no_log: true
+
+    # FDL Server Deployment
+    - name: Create Finlight Data Listener Deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ fdl_server_name }}"
+            namespace: "{{ data_plane_namespace }}"
+          spec:
+            replicas: "{{ fdl_server_replicas }}"
+            selector:
+              matchLabels:
+                app: "{{ fdl_server_name }}"
+            strategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxSurge: 1
+                maxUnavailable: 0
+            template:
+              metadata:
+                labels:
+                  app: "{{ fdl_server_name }}"
+              spec:
+                containers:
+                  - name: "{{ fdl_server_name }}"
+                    image: "{{ fdl_server_image }}"
+                    imagePullPolicy: "{{ image_pull_policy }}"
+                    ports:
+                      - containerPort: "{{ fdl_server_container_port }}"
+                        name: http
+                    livenessProbe:
+                      httpGet:
+                        path: /health
+                        port: "{{ fdl_server_container_port }}"
+                      initialDelaySeconds: 30
+                      periodSeconds: 15
+                      timeoutSeconds: 5
+                      successThreshold: 1
+                      failureThreshold: 3
+                    readinessProbe:
+                      httpGet:
+                        path: /health
+                        port: "{{ fdl_server_container_port }}"
+                      initialDelaySeconds: 30
+                      periodSeconds: 15
+                      timeoutSeconds: 10
+                      successThreshold: 1
+                      failureThreshold: 20
+                    envFrom:
+                      - secretRef:
+                          name: "{{ fdl_server_secret_name }}"
+                    env:
+                      - name: LOG_LEVEL
+                        value: "{{ fdl_server_log_level }}"
+                      - name: SERVER_PORT
+                        value: "{{ fdl_server_container_port | string }}"
+                      - name: CONTAINER_IMAGE
+                        value: "{{ fdl_server_image }}"
+                      - name: IMAGE_VERSION
+                        value: "{{ app_container_image_version }}"
+                      - name: TZ
+                        value: "{{ container_timezone }}"
+                      - name: POD_NAME
+                        valueFrom:
+                          fieldRef:
+                            fieldPath: metadata.name
+                      - name: MARKET_DATA_LISTENER_AUTO_START_ENABLED
+                        value: "{{ market_data_listener_auto_start_enabled | string }}"
+                      - name: FINLIGHT_INCLUDE_ENTITIES
+                        value: "{{ fdl_include_entities | string }}"
+                      - name: OTEL_SERVICE_NAME
+                        value: "fdl"
+                      - name: OTEL_TRACES_EXPORTER
+                        value: "{{ otel_traces_exporter }}"
+                      - name: OTEL_METRICS_EXPORTER
+                        value: "{{ otel_metrics_exporter }}"
+                      - name: OTEL_LOGS_EXPORTER
+                        value: "{{ otel_logs_exporter }}"
+                      - name: OTEL_LOG_LEVEL
+                        value: "{{ otel_log_level }}"
+                      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+                        value: "{{ otel_exporter_otlp_protocol }}"
+                    resources:
+                      requests:
+                        cpu: "{{ fdl_server_cpu_min }}"
+                        memory: "{{ fdl_server_memory_min }}"
+                      limits:
+                        cpu: "{{ fdl_server_cpu_max }}"
+                        memory: "{{ fdl_server_memory_max }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # FDL Server Service
+    - name: Create Finlight Data Listener service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ fdl_server_name }}"
+            namespace: "{{ data_plane_namespace }}"
+          spec:
+            type: ClusterIP
+            ports:
+              - port: "{{ fdl_server_container_port }}"
+                targetPort: "{{ fdl_server_container_port }}"
+                protocol: TCP
+                name: http
+            selector:
+              app: "{{ fdl_server_name }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # FDL Server Ingress
+    - name: Create Finlight Data Listener Ingress
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: "{{ fdl_server_name }}"
+            namespace: "{{ data_plane_namespace }}"
+            annotations:
+              cert-manager.io/issuer: "{{ fdl_server_cert_issuer }}"
+              nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          spec:
+            ingressClassName: "{{ fdl_server_ingress_class }}"
+            tls:
+              - hosts:
+                  - "{{ fdl_server_domain }}"
+                secretName: "{{ fdl_server_name }}-tls"
+            rules:
+              - host: "{{ fdl_server_domain }}"
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: "{{ fdl_server_name }}"
+                          port:
+                            number: "{{ fdl_server_container_port }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Wait for FDL to be ready
+    - name: Wait for Finlight Data Listener to be ready
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ data_plane_namespace }}"
+        label_selectors:
+          - app={{ fdl_server_name }}
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Wait for TLS certificate
+    - name: Wait for FDL TLS certificate to be issued
+      kubernetes.core.k8s_info:
+        kind: Certificate
+        name: "{{ fdl_server_name }}-tls"
+        namespace: "{{ data_plane_namespace }}"
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: fdl_cert_status
+      retries: 3
+      delay: 30
+      until: fdl_cert_status is succeeded
+
+    # Display summary
+    - name: Display FDL deployment summary
+      debug:
+        msg:
+          - "=== Finlight Data Listener Deployment Complete ==="
+          - "Service: {{ fdl_server_name }}"
+          - "Namespace: {{ data_plane_namespace }}"
+          - "Port: {{ fdl_server_container_port }}"
+          - "API Endpoint: https://{{ fdl_server_domain }}"
+          - ""
+          - "Dependencies:"
+          - "  - RabbitMQ: mdp-market-data-queues.{{ data_plane_namespace }}.svc.cluster.local:{{ rabbitmq_node_port }}"
+          - ""
+          - "Verify with:"
+          - "  kubectl get pods -n {{ data_plane_namespace }} -l app={{ fdl_server_name }}"
+          - "  curl https://{{ fdl_server_domain }}/health"

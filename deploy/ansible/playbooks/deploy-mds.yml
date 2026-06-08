@@ -1,0 +1,240 @@
+---
+# File: ansible/playbooks/deploy-mds.yml
+
+- name: Deploy Market Data Scanner
+  hosts: all
+  gather_facts: true
+  become: true
+  become_user: stack
+
+  tasks:
+    - name: Set runtime facts for Python interpreter
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: /opt/ansible/venv/bin/python
+        ansible_python_venv_dir: /opt/ansible/venv
+
+    # MDS Server Secrets
+    - name: Create Market Data Scanner secrets
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ mds_server_secret_name }}"
+            namespace: "{{ mds_server_namespace }}"
+          stringData:
+            FINLIGHT_API_KEY: "{{ finlight_api_key }}"
+            MASSIVE_API_KEY: "{{ massive_api_key }}"
+            REDIS_PASSWORD: "{{ redis_password }}"
+            OTEL_EXPORTER_OTLP_ENDPOINT: "{{ otel_exporter_otlp_endpoint }}"
+            OTEL_EXPORTER_OTLP_HEADERS: "{{ otel_exporter_otlp_headers }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      no_log: true
+
+    # MDS Server Deployment
+    - name: Create Market Data Scanner Deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ mds_server_name }}"
+            namespace: "{{ mds_server_namespace }}"
+          spec:
+            replicas: "{{ mds_server_replicas }}"
+            selector:
+              matchLabels:
+                app: "{{ mds_server_name }}"
+            strategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxSurge: 1
+                maxUnavailable: 0
+            template:
+              metadata:
+                labels:
+                  app: "{{ mds_server_name }}"
+              spec:
+                containers:
+                  - name: "{{ mds_server_name }}"
+                    image: "{{ mds_server_image }}"
+                    imagePullPolicy: "{{ image_pull_policy }}"
+                    ports:
+                      - containerPort: "{{ mds_server_container_port }}"
+                        name: http
+                    livenessProbe:
+                      httpGet:
+                        path: /health
+                        port: "{{ mds_server_container_port }}"
+                      initialDelaySeconds: 30
+                      periodSeconds: 15
+                      timeoutSeconds: 5
+                      successThreshold: 1
+                      failureThreshold: 3
+                    readinessProbe:
+                      httpGet:
+                        path: /health
+                        port: "{{ mds_server_container_port }}"
+                      initialDelaySeconds: 30
+                      periodSeconds: 15
+                      timeoutSeconds: 10
+                      successThreshold: 1
+                      failureThreshold: 20
+                    envFrom:
+                      - secretRef:
+                          name: "{{ mds_server_secret_name }}"
+                    env:
+                      - name: LOG_LEVEL
+                        value: "{{ mds_server_log_level }}"
+                      - name: CONTAINER_IMAGE
+                        value: "{{ mds_server_image }}"
+                      - name: IMAGE_VERSION
+                        value: "{{ app_container_image_version }}"
+                      - name: TZ
+                        value: "{{ container_timezone }}"
+                      - name: MDS_SERVER_DOMAIN
+                        value: "{{ mds_server_domain }}"
+                      - name: DRA_CACHE_LIST_MAX
+                        value: "{{ mds_dra_cache_list_max | string }}"
+                      - name: POD_NAME
+                        valueFrom:
+                          fieldRef:
+                            fieldPath: metadata.name
+                      - name: WDC_REDIS_URL
+                        value: "redis://wdc-redis.{{ data_plane_namespace }}.svc.cluster.local:6379//0"
+                      - name: OTEL_SERVICE_NAME
+                        value: "mds"
+                      - name: OTEL_TRACES_EXPORTER
+                        value: "{{ otel_traces_exporter }}"
+                      - name: OTEL_METRICS_EXPORTER
+                        value: "{{ otel_metrics_exporter }}"
+                      - name: OTEL_LOGS_EXPORTER
+                        value: "{{ otel_logs_exporter }}"
+                      - name: OTEL_LOG_LEVEL
+                        value: "{{ otel_log_level }}"
+                      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+                        value: "{{ otel_exporter_otlp_protocol }}"
+                      - name: OTEL_PYTHON_FASTAPI_EXCLUDED_URLS
+                        value: "{{ otel_python_fastapi_excluded_urls }}"
+                    resources:
+                      requests:
+                        cpu: "{{ mds_server_cpu_min | default('500m') }}"
+                        memory: "{{ mds_server_memory_min | default('256Mi') }}"
+                      limits:
+                        cpu: "{{ mds_server_cpu_max | default('2000m') }}"
+                        memory: "{{ mds_server_memory_max | default('2Gi') }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # MDS Server Service
+    - name: Create Market Data Scanner service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ mds_server_name }}"
+            namespace: "{{ mds_server_namespace }}"
+          spec:
+            type: ClusterIP
+            ports:
+              - port: "{{ mds_server_container_port }}"
+                targetPort: "{{ mds_server_container_port }}"
+                protocol: TCP
+                name: http
+            selector:
+              app: "{{ mds_server_name }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # MDS Server Ingress
+    - name: Create Market Data Scanner Ingress
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: "{{ mds_server_name }}"
+            namespace: "{{ mds_server_namespace }}"
+            annotations:
+              cert-manager.io/issuer: "{{ mds_server_cert_issuer }}"
+              nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          spec:
+            ingressClassName: "{{ mds_server_ingress_class }}"
+            tls:
+              - hosts:
+                  - "{{ mds_server_domain }}"
+                secretName: "{{ mds_server_name }}-tls"
+            rules:
+              - host: "{{ mds_server_domain }}"
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: "{{ mds_server_name }}"
+                          port:
+                            number: "{{ mds_server_container_port }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Wait for MDS to be ready
+    - name: Wait for Market Data Scanner to be ready
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ mds_server_namespace }}"
+        label_selectors:
+          - app={{ mds_server_name }}
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: mds_pods
+      retries: 5
+      delay: 10
+      until: mds_pods is succeeded
+      failed_when: false  # Non-blocking: pod scheduling can lag; cert wait below is the hard gate
+
+    # Wait for TLS certificate
+    - name: Wait for MDS TLS certificate to be issued
+      kubernetes.core.k8s_info:
+        kind: Certificate
+        name: "{{ mds_server_name }}-tls"
+        namespace: "{{ mds_server_namespace }}"
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: mds_cert_status
+      retries: 3
+      delay: 30
+      until: mds_cert_status is succeeded
+
+    # Display deployment summary
+    - name: Display deployment summary
+      debug:
+        msg:
+          - "=== Market Data Scanner Deployment Complete ==="
+          - "Service: {{ mds_server_name }}"
+          - "Namespace: {{ mds_server_namespace }}"
+          - "API Endpoint: https://{{ mds_server_domain }}"
+          - ""
+          - "Dependencies:"
+          - "  - Redis: wdc-redis.{{ data_plane_namespace }}.svc.cluster.local:6379"
+          - ""
+          - "Verify with:"
+          - "  kubectl get pods -n {{ mds_server_namespace }} -l app={{ mds_server_name }}"
+          - "  kubectl logs -n {{ mds_server_namespace }} -l app={{ mds_server_name }}"
+          - "  curl https://{{ mds_server_domain }}/health"

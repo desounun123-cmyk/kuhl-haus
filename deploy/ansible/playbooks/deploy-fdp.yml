@@ -1,0 +1,227 @@
+---
+- name: Deploy Finlight Data Processor Server
+  hosts: all
+  gather_facts: true
+  become: true
+  become_user: stack
+
+  tasks:
+    - name: Set runtime facts for Python interpreter
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: /opt/ansible/venv/bin/python
+        ansible_python_venv_dir: /opt/ansible/venv
+
+    # FDP Server Secrets
+    - name: Create Finlight Data Processor secrets
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ fdp_server_secret_name }}"
+            namespace: "{{ data_plane_namespace }}"
+          stringData:
+            RABBITMQ_URL: "amqp://{{ rabbitmq_user }}:{{ rabbitmq_password }}@mdp-market-data-queues.{{ data_plane_namespace }}.svc.cluster.local:{{ rabbitmq_node_port }}//"
+            REDIS_URL: "redis://mdp-redis.{{ data_plane_namespace }}.svc.cluster.local:{{ redis_port }}/0"
+            OTEL_EXPORTER_OTLP_ENDPOINT: "{{ otel_exporter_otlp_endpoint }}"
+            OTEL_EXPORTER_OTLP_HEADERS: "{{ otel_exporter_otlp_headers }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      no_log: true
+
+    # FDP Server Deployment
+    - name: Create Finlight Data Processor Deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ fdp_server_name }}"
+            namespace: "{{ data_plane_namespace }}"
+          spec:
+            replicas: "{{ fdp_server_replicas }}"
+            selector:
+              matchLabels:
+                app: "{{ fdp_server_name }}"
+            strategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxSurge: 1
+                maxUnavailable: 0
+            template:
+              metadata:
+                labels:
+                  app: "{{ fdp_server_name }}"
+              spec:
+                containers:
+                  - name: "{{ fdp_server_name }}"
+                    image: "{{ fdp_server_image }}"
+                    imagePullPolicy: "{{ image_pull_policy }}"
+                    ports:
+                      - containerPort: "{{ fdp_server_container_port }}"
+                        name: http
+                    livenessProbe:
+                      httpGet:
+                        path: /health
+                        port: "{{ fdp_server_container_port }}"
+                      initialDelaySeconds: 30
+                      periodSeconds: 15
+                      timeoutSeconds: 5
+                      successThreshold: 1
+                      failureThreshold: 3
+                    readinessProbe:
+                      httpGet:
+                        path: /health
+                        port: "{{ fdp_server_container_port }}"
+                      initialDelaySeconds: 30
+                      periodSeconds: 15
+                      timeoutSeconds: 10
+                      successThreshold: 1
+                      failureThreshold: 20
+                    envFrom:
+                      - secretRef:
+                          name: "{{ fdp_server_secret_name }}"
+                    env:
+                      - name: LOG_LEVEL
+                        value: "{{ fdp_server_log_level }}"
+                      - name: SERVER_PORT
+                        value: "{{ fdp_server_container_port | string }}"
+                      - name: CONTAINER_IMAGE
+                        value: "{{ fdp_server_image }}"
+                      - name: IMAGE_VERSION
+                        value: "{{ app_container_image_version }}"
+                      - name: TZ
+                        value: "{{ container_timezone }}"
+                      - name: POD_NAME
+                        valueFrom:
+                          fieldRef:
+                            fieldPath: metadata.name
+                      - name: OTEL_SERVICE_NAME
+                        value: "fdp"
+                      - name: OTEL_TRACES_EXPORTER
+                        value: "{{ otel_traces_exporter }}"
+                      - name: OTEL_METRICS_EXPORTER
+                        value: "{{ otel_metrics_exporter }}"
+                      - name: OTEL_LOGS_EXPORTER
+                        value: "{{ otel_logs_exporter }}"
+                      - name: OTEL_LOG_LEVEL
+                        value: "{{ otel_log_level }}"
+                      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+                        value: "{{ otel_exporter_otlp_protocol }}"
+                    resources:
+                      requests:
+                        cpu: "{{ fdp_server_cpu_min }}"
+                        memory: "{{ fdp_server_memory_min }}"
+                      limits:
+                        cpu: "{{ fdp_server_cpu_max }}"
+                        memory: "{{ fdp_server_memory_max }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # FDP Server Service
+    - name: Create Finlight Data Processor service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ fdp_server_name }}"
+            namespace: "{{ data_plane_namespace }}"
+          spec:
+            type: ClusterIP
+            ports:
+              - port: "{{ fdp_server_container_port }}"
+                targetPort: "{{ fdp_server_container_port }}"
+                protocol: TCP
+                name: http
+            selector:
+              app: "{{ fdp_server_name }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # FDP Server Ingress
+    - name: Create Finlight Data Processor Ingress
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: "{{ fdp_server_name }}"
+            namespace: "{{ data_plane_namespace }}"
+            annotations:
+              cert-manager.io/issuer: "{{ fdp_server_cert_issuer }}"
+              nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          spec:
+            ingressClassName: "{{ fdp_server_ingress_class }}"
+            tls:
+              - hosts:
+                  - "{{ fdp_server_domain }}"
+                secretName: "{{ fdp_server_name }}-tls"
+            rules:
+              - host: "{{ fdp_server_domain }}"
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: "{{ fdp_server_name }}"
+                          port:
+                            number: "{{ fdp_server_container_port }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Wait for FDP to be ready
+    - name: Wait for Finlight Data Processor to be ready
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ data_plane_namespace }}"
+        label_selectors:
+          - app={{ fdp_server_name }}
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Wait for TLS certificate
+    - name: Wait for FDP TLS certificate to be issued
+      kubernetes.core.k8s_info:
+        kind: Certificate
+        name: "{{ fdp_server_name }}-tls"
+        namespace: "{{ data_plane_namespace }}"
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: fdp_cert_status
+      retries: 3
+      delay: 30
+      until: fdp_cert_status is succeeded
+
+    # Display summary
+    - name: Display FDP deployment summary
+      debug:
+        msg:
+          - "=== Finlight Data Processor Deployment Complete ==="
+          - "Service: {{ fdp_server_name }}"
+          - "Namespace: {{ data_plane_namespace }}"
+          - "Port: {{ fdp_server_container_port }}"
+          - "API Endpoint: https://{{ fdp_server_domain }}"
+          - ""
+          - "Dependencies:"
+          - "  - RabbitMQ: mdp-market-data-queues.{{ data_plane_namespace }}.svc.cluster.local:{{ rabbitmq_node_port }}"
+          - "  - Redis: mdp-redis.{{ data_plane_namespace }}.svc.cluster.local:{{ redis_port }}"
+          - ""
+          - "Verify with:"
+          - "  kubectl get pods -n {{ data_plane_namespace }} -l app={{ fdp_server_name }}"
+          - "  curl https://{{ fdp_server_domain }}/health"

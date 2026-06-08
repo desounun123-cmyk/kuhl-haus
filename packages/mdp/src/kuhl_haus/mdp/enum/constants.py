@@ -1,0 +1,33 @@
+"""Time duration constants in seconds for cache TTL and rate limiting.
+
+Provides standardized duration values used throughout the market data pipeline
+for Redis cache expiration and throttle intervals. All values are in seconds
+to match Redis TTL expectations.
+"""
+# Seconds
+THIRTY_SECONDS = 30
+
+# Minutes in seconds
+ONE_MINUTE = 60
+FIVE_MINUTES = 300
+TEN_MINUTES = 600
+FIFTEEN_MINUTES = 900
+TWENTY_MINUTES = 1200
+THIRTY_MINUTES = 1800
+
+# Hours in seconds
+ONE_HOUR = 3600
+TWO_HOURS = 7200
+FOUR_HOURS = 14400
+SIX_HOURS = 21600
+EIGHT_HOURS = 28800
+TWELVE_HOURS = 43200
+
+# Days in seconds
+ONE_DAY = 86400
+TWO_DAYS = 172800
+THREE_DAYS = 259200
+FOUR_DAYS = 345600
+FIVE_DAYS = 432000
+SIX_DAYS = 518400
+SEVEN_DAYS = 604800

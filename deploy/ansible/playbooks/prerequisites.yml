@@ -1,0 +1,75 @@
+- name: Verify and install prerequisites
+  hosts: all
+  gather_facts: true
+
+  pre_tasks:
+    - name: Show Python version and path
+      ansible.builtin.command: "{{ ansible_python_interpreter | default('/usr/bin/python3') }} -c 'import sys; print(sys.version); print(sys.executable)'"
+      register: python_info
+
+    - name: Display Python information
+      ansible.builtin.debug:
+        msg: "{{ python_info.stdout_lines }}"
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+      become: true
+
+    - name: Install required system packages
+      ansible.builtin.apt:
+        name:
+          - python3-pip
+          - python3-setuptools
+          - python3-setuptools-scm
+          - python3-venv
+        state: present
+        update_cache: true
+      become: true
+
+    - name: Create Python virtual environment
+      ansible.builtin.pip:
+        name: pip
+        virtualenv: /opt/ansible/venv
+        virtualenv_command: python3 -m venv
+      become: true
+
+    - name: Install Python kubernetes module in virtual environment
+      ansible.builtin.pip:
+        name:
+          - kubernetes>=28.1.0
+          - openshift>=0.13.1
+          - pyyaml>=5.4.1
+          - jsonpatch
+        virtualenv: /opt/ansible/venv
+      become: true
+
+    - name: Set runtime facts for Python interpreter
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: /opt/ansible/venv/bin/python
+        ansible_python_venv_dir: /opt/ansible/venv
+
+    - name: Verify virtual environment
+      ansible.builtin.stat:
+        path: "{{ ansible_python_venv_dir }}"
+      register: venv_path
+
+    - name: Show virtual environment status
+      ansible.builtin.debug:
+        msg: "Virtual environment {{ 'exists' if venv_path.stat.exists else 'does not exist' }} at {{ venv_path.stat.path }}"
+
+    - name: Test kubernetes module availability
+      ansible.builtin.command: >
+        {{ ansible_python_interpreter }} -c
+        'import kubernetes; print(f"Kubernetes module version: {kubernetes.__version__}")'
+      register: k8s_test
+      ignore_errors: true
+
+    - name: Show kubernetes module status
+      ansible.builtin.debug:
+        msg: "{{ k8s_test.stdout if k8s_test.rc == 0 else 'Kubernetes module not found' }}"
+
+    - name: Fail if kubernetes module not available
+      ansible.builtin.fail:
+        msg: "Kubernetes Python module is not available in the virtual environment"
+      when: k8s_test.rc != 0

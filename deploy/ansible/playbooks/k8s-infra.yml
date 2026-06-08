@@ -1,0 +1,165 @@
+- hosts: dev-admin
+  become: true
+  tasks:
+    - name: Set runtime facts for Python interpreter
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: /opt/ansible/venv/bin/python
+        ansible_python_venv_dir: /opt/ansible/venv
+
+    # Pre-flight: Ensure node has podCIDR assigned
+    - name: Check if node has podCIDR assigned
+      become: true
+      become_user: stack
+      command: kubectl get node docker-desktop -o jsonpath='{.spec.podCIDR}'
+      register: podcidr_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    - name: Assign podCIDR to node (Docker Desktop workaround)
+      become: true
+      become_user: stack
+      command: >
+        kubectl patch node docker-desktop
+        -p '{"spec":{"podCIDR":"10.244.0.0/24"}}'
+      when: podcidr_check.stdout == ""
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Install Pod Network
+    - name: Install Flannel Pod Network
+      become: true
+      become_user: stack
+      kubernetes.core.k8s:
+        state: present
+        src: https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # Helm
+    - name: Download Helm installation script
+      get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        dest: /tmp/get_helm.sh
+        mode: '0700'
+      register: helm_script
+
+    - name: Install Helm
+      command: /tmp/get_helm.sh
+      args:
+        creates: /usr/local/bin/helm
+      when: helm_script.changed or not ansible_check_mode
+
+    # NGINX Ingress Controller
+    - name: Add NGINX ingress Helm repository
+      become: true
+      become_user: stack
+      kubernetes.core.helm_repository:
+        name: ingress-nginx
+        repo_url: https://kubernetes.github.io/ingress-nginx
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    - name: Install NGINX ingress controller
+      become: true
+      become_user: stack
+      kubernetes.core.helm:
+        name: ingress-nginx
+        chart_ref: ingress-nginx/ingress-nginx
+        release_namespace: ingress-nginx
+        create_namespace: true
+        update_repo_cache: true
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    # MetalLB - To enable MetalLB, set 'use_metal_lb: true' in the inventory vars
+    - name: Install MetalLB
+      become: true
+      become_user: stack
+      kubernetes.core.k8s:
+        state: present
+        src: https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      when: use_metal_lb is defined and use_metal_lb
+
+    - name: Wait for MetalLB pods to be ready
+      become: true
+      become_user: stack
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: metallb-system
+        label_selectors:
+          - app=metallb
+        wait: yes
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      register: metallb_pods
+      retries: 3
+      delay: 10
+      until: metallb_pods is succeeded
+      when: use_metal_lb is defined and use_metal_lb
+
+    - name: Apply MetalLB IP address pool configuration
+      become: true
+      become_user: stack
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: metallb.io/v1beta1
+          kind: IPAddressPool
+          metadata:
+            name: default-pool
+            namespace: metallb-system
+          spec:
+            addresses:
+              - "{{ default_ip_pool_range }}"
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      when: use_metal_lb is defined and use_metal_lb
+
+    - name: Apply MetalLB L2 advertisement configuration
+      become: true
+      become_user: stack
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: metallb.io/v1beta1
+          kind: L2Advertisement
+          metadata:
+            name: default
+            namespace: metallb-system
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+      when: use_metal_lb is defined and use_metal_lb
+
+    # Certificate Manager
+    - name: Add Jetstack Helm repository
+      become: true
+      become_user: stack
+      kubernetes.core.helm_repository:
+        name: jetstack
+        repo_url: https://charts.jetstack.io
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
+
+    - name: Install cert-manager
+      become: true
+      become_user: stack
+      kubernetes.core.helm:
+        name: cert-manager
+        chart_ref: jetstack/cert-manager
+        chart_version: v1.19.3
+        release_namespace: cert-manager
+        create_namespace: true
+        update_repo_cache: true
+        values:
+          crds:
+            enabled: true
+      environment:
+        KUBECONFIG: /home/stack/.kube/config
