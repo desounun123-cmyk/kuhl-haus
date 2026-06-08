@@ -1,0 +1,205 @@
+# Coolify-ready Docker Compose for kuhl-haus
+#
+# Differences vs deploy/Docker/compose.yaml:
+#   - No `container_name` (Coolify manages container naming per-deployment).
+#   - No hardcoded secrets — all sensitive values come from environment
+#     variables defined in the Coolify "Environment Variables" tab
+#     (see deploy/coolify/.env.example for the full list).
+#   - No custom subnets / fixed IP ranges (avoids conflicts on a shared host).
+#   - Only the public-facing service (`scp`, the py4web app on :8000) is
+#     exposed via Coolify's magic `SERVICE_FQDN_*` variable. All other
+#     services are reachable only on the internal Docker network.
+#   - Host port publishing removed for internal-only services. If you want
+#     the RabbitMQ management UI / Redis Insight reachable externally, set
+#     SERVICE_FQDN_MDQ / SERVICE_FQDN_MDC and uncomment the labels.
+
+services:
+  mdc:
+    image: redis/redis-stack:latest
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis}
+    volumes:
+      - mdc_data:/data
+    networks:
+      - data_plane
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  mdq:
+    image: docker.io/rabbitmq:latest
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-mdq}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-mdq}
+      RABBITMQ_ENABLED_PLUGINS: "rabbitmq_management,rabbitmq_prometheus,rabbitmq_management_agent,rabbitmq_web_dispatch"
+    volumes:
+      - mdq_data:/var/lib/rabbitmq
+    networks:
+      - data_plane
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  mdl:
+    image: ghcr.io/kuhl-haus/kuhl-haus-mdl-server:latest
+    environment:
+      MASSIVE_API_KEY: ${MASSIVE_API_KEY}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-mdq}:${RABBITMQ_PASSWORD:-mdq}@mdq:5672/%2F
+      MARKET_DATA_MESSAGE_TTL: 5000
+      MARKET_DATA_LISTENER_AUTO_START_ENABLED: "True"
+      MASSIVE_SUBSCRIPTIONS: '["A.*"]'
+    depends_on:
+      - mdq
+    networks:
+      - data_plane
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4200/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mdp:
+    image: ghcr.io/kuhl-haus/kuhl-haus-mdp-server:latest
+    environment:
+      MASSIVE_API_KEY: ${MASSIVE_API_KEY}
+      REDIS_URL: redis://mdc:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-mdq}:${RABBITMQ_PASSWORD:-mdq}@mdq:5672/%2F
+    depends_on:
+      - mdc
+      - mdq
+    networks:
+      - data_plane
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4201/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  wds:
+    image: ghcr.io/kuhl-haus/kuhl-haus-wds-server:latest
+    environment:
+      AUTH_ENABLED: "True"
+      AUTH_API_KEY: ${WDS_API_KEY}
+      REDIS_URL: redis://mdc:6379/0
+    depends_on:
+      - mdc
+    networks:
+      - data_plane
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4202/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  fdl:
+    image: ghcr.io/kuhl-haus/kuhl-haus-fdl-server:latest
+    environment:
+      FINLIGHT_API_KEY: ${FINLIGHT_API_KEY}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-mdq}:${RABBITMQ_PASSWORD:-mdq}@mdq:5672/%2F
+      MARKET_DATA_MESSAGE_TTL: 5000
+      MDQ_PUBLISHER_CONFIRMS: "true"
+      FDL_AUTO_START_ENABLED: "true"
+      FINLIGHT_INCLUDE_ENTITIES: "true"
+    depends_on:
+      - mdq
+    networks:
+      - data_plane
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4203/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  fdp:
+    image: ghcr.io/kuhl-haus/kuhl-haus-fdp-server:latest
+    environment:
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-mdq}:${RABBITMQ_PASSWORD:-mdq}@mdq:5672/%2F
+      MDC_REDIS_URL: redis://mdc:6379/0
+      WDC_REDIS_URL: redis://mdc:6379/1
+      FINLIGHT_API_KEY: ${FINLIGHT_API_KEY}
+      FDP_QUEUE_NAME: news
+      PREFETCH_COUNT: 100
+      MAX_CONCURRENCY: 500
+      NEWS_FEED_LIST_MAX: 10000
+      NEWS_TICKER_LIST_MAX: 100
+      NEWS_FEED_CACHE_TTL: 172800
+      NEWS_TICKER_CACHE_TTL: 604800
+    depends_on:
+      - mdc
+      - mdq
+    networks:
+      - data_plane
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4204/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mds:
+    image: ghcr.io/kuhl-haus/kuhl-haus-mds-server:latest
+    environment:
+      WDC_REDIS_URL: redis://mdc:6379/1
+      DRA_CACHE_LIST_MAX: 1000
+    depends_on:
+      - mdc
+    networks:
+      - data_plane
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4205/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  scp:
+    image: ghcr.io/kuhl-haus/kuhl-haus-mdp-app-server:latest
+    user: "999:999"
+    environment:
+      # Coolify magic var: replaced at deploy time with the public FQDN
+      # bound to port 8000. Set the desired domain in Coolify > Domains.
+      SERVICE_FQDN_SCP_8000: ${SERVICE_FQDN_SCP_8000}
+      DEFAULT_LOGIN_ENABLED: "true"
+      WDS_ENDPOINT: "ws://wds:4202/ws"
+      WDS_API_KEY: ${WDS_API_KEY}
+    depends_on:
+      - wds
+    networks:
+      - scp
+      - data_plane
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    volumes:
+      - scp_default_db:/home/py4web/apps/_default/databases/
+      - scp_default_uploads:/home/py4web/apps/_default/uploads/
+
+volumes:
+  mdc_data:
+  mdq_data:
+  scp_default_db:
+  scp_default_uploads:
+
+networks:
+  data_plane:
+    driver: bridge
+  scp:
+    driver: bridge
