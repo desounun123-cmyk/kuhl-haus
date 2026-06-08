@@ -86,7 +86,22 @@ async def lifespan(app: FastAPI):
     )
     await massive_data_queues.setup_queues()
 
-    massive_data_listener = MassiveDataListener(
+    # ------------------------------------------------------------------
+    # Listener selection
+    #
+    #   1. Massive is ALWAYS the primary provider.
+    #   2. If DATABENTO_API_KEY is set, we wrap the primary in
+    #      FallbackDataListener so that the wrapper can transparently
+    #      switch to Databento *only* when Massive fails to connect or
+    #      stays disconnected past max_reconnects. The wrapper also runs
+    #      a periodic recovery probe that fails back to Massive when
+    #      it becomes available again.
+    #   3. If DATABENTO_API_KEY is NOT set, we instantiate the original
+    #      MassiveDataListener directly — behaviour is identical to the
+    #      pre-fallback version of this server (no Databento code path
+    #      is ever loaded).
+    # ------------------------------------------------------------------
+    primary_kwargs = dict(
         message_handler=massive_data_queues.handle_messages,
         api_key=settings.massive_api_key,
         feed=settings.feed,
@@ -96,26 +111,24 @@ async def lifespan(app: FastAPI):
         subscriptions=settings.subscriptions,
         max_reconnects=settings.max_reconnects,
         secure=settings.secure,
-    ) if not settings.databento_api_key else FallbackDataListener(
-        message_handler=massive_data_queues.handle_messages,
-        api_key=settings.massive_api_key,
-        feed=settings.feed,
-        market=settings.market,
-        raw=settings.raw,
-        verbose=settings.verbose,
-        subscriptions=settings.subscriptions,
-        max_reconnects=settings.max_reconnects,
-        secure=settings.secure,
-        databento_api_key=settings.databento_api_key,
-        databento_dataset=settings.databento_dataset,
-        recovery_interval_seconds=settings.databento_recovery_interval_seconds,
     )
+
     if settings.databento_api_key:
         logger.info(
-            "Databento fallback enabled (dataset=%s, recovery_interval=%ss).",
+            "Databento fallback enabled (dataset=%s, recovery_interval=%ss). "
+            "Massive remains the primary provider; Databento only activates "
+            "on Massive failure.",
             settings.databento_dataset,
             settings.databento_recovery_interval_seconds,
         )
+        massive_data_listener = FallbackDataListener(
+            **primary_kwargs,
+            databento_api_key=settings.databento_api_key,
+            databento_dataset=settings.databento_dataset,
+            recovery_interval_seconds=settings.databento_recovery_interval_seconds,
+        )
+    else:
+        massive_data_listener = MassiveDataListener(**primary_kwargs)
     logger.info("Massive Data Listener is ready.")
     # NOTE: AUTO-START FEATURE IS DISABLED BY DEFAULT.
     # Non-business licenses are limited to a single WebSocket connection for the entire account.
