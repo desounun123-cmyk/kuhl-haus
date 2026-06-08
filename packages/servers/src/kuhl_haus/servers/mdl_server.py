@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings
 
 from kuhl_haus.mdp.components.massive_data_queues import MassiveDataQueues
 from kuhl_haus.mdp.components.massive_data_listener import MassiveDataListener
+from kuhl_haus.mdp.components.fallback_data_listener import FallbackDataListener
 from kuhl_haus.mdp.helpers.structured_logging import setup_logging
 from kuhl_haus.mdp.helpers.utils import get_massive_api_key
 
@@ -34,6 +35,16 @@ class Settings(BaseSettings):
     verbose: bool = os.environ.get("MASSIVE_VERBOSE", False)
     max_reconnects: Optional[int] = os.environ.get("MASSIVE_MAX_RECONNECTS", 5)
     secure: bool = os.environ.get("MASSIVE_SECURE", True)
+
+    # Databento fallback settings. When DATABENTO_API_KEY is set, the MDL
+    # server wraps the primary Massive listener in a FallbackDataListener so
+    # that prolonged Massive outages are absorbed by streaming the same
+    # symbols from Databento. Leave unset to disable fallback entirely.
+    databento_api_key: Optional[str] = os.environ.get("DATABENTO_API_KEY")
+    databento_dataset: str = os.environ.get("DATABENTO_DATASET", "XNAS.ITCH")
+    databento_recovery_interval_seconds: int = int(
+        os.environ.get("DATABENTO_RECOVERY_INTERVAL_SECONDS", 300)
+    )
 
 
     # RabbitMQ Settings
@@ -85,7 +96,26 @@ async def lifespan(app: FastAPI):
         subscriptions=settings.subscriptions,
         max_reconnects=settings.max_reconnects,
         secure=settings.secure,
+    ) if not settings.databento_api_key else FallbackDataListener(
+        message_handler=massive_data_queues.handle_messages,
+        api_key=settings.massive_api_key,
+        feed=settings.feed,
+        market=settings.market,
+        raw=settings.raw,
+        verbose=settings.verbose,
+        subscriptions=settings.subscriptions,
+        max_reconnects=settings.max_reconnects,
+        secure=settings.secure,
+        databento_api_key=settings.databento_api_key,
+        databento_dataset=settings.databento_dataset,
+        recovery_interval_seconds=settings.databento_recovery_interval_seconds,
     )
+    if settings.databento_api_key:
+        logger.info(
+            "Databento fallback enabled (dataset=%s, recovery_interval=%ss).",
+            settings.databento_dataset,
+            settings.databento_recovery_interval_seconds,
+        )
     logger.info("Massive Data Listener is ready.")
     # NOTE: AUTO-START FEATURE IS DISABLED BY DEFAULT.
     # Non-business licenses are limited to a single WebSocket connection for the entire account.

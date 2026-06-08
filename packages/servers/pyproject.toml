@@ -38,6 +38,11 @@ Changelog = "https://github.com/kuhl-haus/kuhl-haus-mdp-servers/commits"
 Tracker = "https://github.com/kuhl-haus/kuhl-haus-mdp-servers/issues"
 
 [project.optional-dependencies]
+# Install with: pip install "kuhl-haus-mdp-servers[databento]"
+# Pulls in the optional Databento client used by the MDL fallback listener.
+databento = [
+    "databento>=0.40",
+]
 testing = [
     "setuptools",
     "setuptools-scm",
