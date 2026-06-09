@@ -1,0 +1,122 @@
+{
+  "$schema": "./services.schema.json",
+  "_comment": [
+    "Declarative spec of every Railway service in the kuhl-haus stack.",
+    "Consumed by deploy/railway/provision.py to create or update a Railway",
+    "project idempotently via the Railway GraphQL API.",
+    "",
+    "Conventions:",
+    "  - image:        a public OCI image (ghcr.io/...) deployed as-is.",
+    "  - env:          static defaults; secret-bearing variables are listed",
+    "                  with the value 'FROM_ENV:<name>' so the provisioner",
+    "                  reads them from the local shell at deploy time.",
+    "  - volume:       optional, single mount path. Railway provisions a",
+    "                  named volume per service automatically.",
+    "  - expose:       optional. When set, a public Railway-generated",
+    "                  domain is created and pointed at the given port.",
+    "                  Set 'expose' on at most one service unless you",
+    "                  really want multiple public hostnames.",
+    "",
+    "Internal service-to-service hostnames are <service>.railway.internal,",
+    "resolved over the project's private network."
+  ],
+  "services": [
+    {
+      "name": "mdc",
+      "image": "redis/redis-stack:latest",
+      "env": { "REDIS_PASSWORD": "FROM_ENV:REDIS_PASSWORD" },
+      "volume": "/data"
+    },
+    {
+      "name": "mdq",
+      "image": "docker.io/rabbitmq:latest",
+      "env": {
+        "RABBITMQ_DEFAULT_USER": "FROM_ENV:RABBITMQ_USER",
+        "RABBITMQ_DEFAULT_PASS": "FROM_ENV:RABBITMQ_PASSWORD",
+        "RABBITMQ_ENABLED_PLUGINS": "rabbitmq_management,rabbitmq_prometheus,rabbitmq_management_agent,rabbitmq_web_dispatch"
+      },
+      "volume": "/var/lib/rabbitmq"
+    },
+    {
+      "name": "mdl",
+      "image": "ghcr.io/kuhl-haus/kuhl-haus-mdl-server:latest",
+      "env": {
+        "MASSIVE_API_KEY": "FROM_ENV:MASSIVE_API_KEY",
+        "RABBITMQ_URL": "amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@mdq.railway.internal:5672/%2F",
+        "MARKET_DATA_MESSAGE_TTL": "5000",
+        "MARKET_DATA_LISTENER_AUTO_START_ENABLED": "True",
+        "MASSIVE_SUBSCRIPTIONS": "[\"A.*\", \"T.*\", \"Q.*\", \"LULD.*\"]",
+        "DATABENTO_API_KEY": "FROM_ENV:DATABENTO_API_KEY?",
+        "DATABENTO_DATASET": "XNAS.ITCH",
+        "DATABENTO_RECOVERY_INTERVAL_SECONDS": "300"
+      }
+    },
+    {
+      "name": "mdp",
+      "image": "ghcr.io/kuhl-haus/kuhl-haus-mdp-server:latest",
+      "env": {
+        "MASSIVE_API_KEY": "FROM_ENV:MASSIVE_API_KEY",
+        "REDIS_URL": "redis://mdc.railway.internal:6379/0",
+        "RABBITMQ_URL": "amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@mdq.railway.internal:5672/%2F"
+      }
+    },
+    {
+      "name": "wds",
+      "image": "ghcr.io/kuhl-haus/kuhl-haus-wds-server:latest",
+      "env": {
+        "AUTH_ENABLED": "True",
+        "AUTH_API_KEY": "FROM_ENV:WDS_API_KEY",
+        "REDIS_URL": "redis://mdc.railway.internal:6379/0"
+      }
+    },
+    {
+      "name": "fdl",
+      "image": "ghcr.io/kuhl-haus/kuhl-haus-fdl-server:latest",
+      "env": {
+        "FINLIGHT_API_KEY": "FROM_ENV:FINLIGHT_API_KEY",
+        "RABBITMQ_URL": "amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@mdq.railway.internal:5672/%2F",
+        "MARKET_DATA_MESSAGE_TTL": "5000",
+        "MDQ_PUBLISHER_CONFIRMS": "true",
+        "FDL_AUTO_START_ENABLED": "true",
+        "FINLIGHT_INCLUDE_ENTITIES": "true"
+      }
+    },
+    {
+      "name": "fdp",
+      "image": "ghcr.io/kuhl-haus/kuhl-haus-fdp-server:latest",
+      "env": {
+        "RABBITMQ_URL": "amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@mdq.railway.internal:5672/%2F",
+        "MDC_REDIS_URL": "redis://mdc.railway.internal:6379/0",
+        "WDC_REDIS_URL": "redis://mdc.railway.internal:6379/1",
+        "FINLIGHT_API_KEY": "FROM_ENV:FINLIGHT_API_KEY",
+        "FDP_QUEUE_NAME": "news",
+        "PREFETCH_COUNT": "100",
+        "MAX_CONCURRENCY": "500",
+        "NEWS_FEED_LIST_MAX": "10000",
+        "NEWS_TICKER_LIST_MAX": "100",
+        "NEWS_FEED_CACHE_TTL": "172800",
+        "NEWS_TICKER_CACHE_TTL": "604800"
+      }
+    },
+    {
+      "name": "mds",
+      "image": "ghcr.io/kuhl-haus/kuhl-haus-mds-server:latest",
+      "env": {
+        "WDC_REDIS_URL": "redis://mdc.railway.internal:6379/1",
+        "DRA_CACHE_LIST_MAX": "1000"
+      }
+    },
+    {
+      "name": "scp",
+      "image": "ghcr.io/kuhl-haus/kuhl-haus-mdp-app-server:latest",
+      "env": {
+        "DEFAULT_LOGIN_ENABLED": "true",
+        "WDS_ENDPOINT": "ws://wds.railway.internal:4202/ws",
+        "WDS_API_KEY": "FROM_ENV:WDS_API_KEY",
+        "PORT": "8000"
+      },
+      "volume": "/home/py4web/apps/_default",
+      "expose": 8000
+    }
+  ]
+}
