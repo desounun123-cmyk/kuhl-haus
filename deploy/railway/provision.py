@@ -198,24 +198,50 @@ def upsert_variables(project_id: str, env_id: str, service_id: str, env: dict) -
 
 
 def ensure_volume(project_id: str, env_id: str, service_id: str, mount: str) -> None:
-    """Create the volume if missing. Railway treats (service, mountPath) as the
-    uniqueness key, so re-running is a no-op when the volume already exists."""
-    try:
-        gql(
-            "mutation($input: VolumeCreateInput!) { volumeCreate(input: $input) { id } }",
-            {
-                "input": {
-                    "projectId": project_id,
-                    "environmentId": env_id,
-                    "serviceId": service_id,
-                    "mountPath": mount,
+    """Create the volume only if the service has none attached yet.
+
+    Railway enforces a hard limit of one volume per service, so we must
+    inspect the project's existing volume instances and skip when there
+    is already an attachment for this service. Re-running the
+    provisioner therefore never raises a "would have 2 volumes" error.
+    """
+    data = gql(
+        """
+        query($id: String!) {
+          project(id: $id) {
+            volumes {
+              edges {
+                node {
+                  id
+                  volumeInstances {
+                    edges { node { id serviceId mountPath } }
+                  }
                 }
-            },
-        )
-    except SystemExit as exc:
-        # Already exists is fine; surface anything else.
-        if "already" not in str(exc).lower():
-            raise
+              }
+            }
+          }
+        }
+        """,
+        {"id": project_id},
+    )
+    for vol_edge in data["project"]["volumes"]["edges"]:
+        for inst_edge in vol_edge["node"]["volumeInstances"]["edges"]:
+            inst = inst_edge["node"]
+            if inst["serviceId"] == service_id:
+                # Already mounted; nothing to do (even if the mountPath
+                # differs — Railway only allows one volume per service).
+                return
+    gql(
+        "mutation($input: VolumeCreateInput!) { volumeCreate(input: $input) { id } }",
+        {
+            "input": {
+                "projectId": project_id,
+                "environmentId": env_id,
+                "serviceId": service_id,
+                "mountPath": mount,
+            }
+        },
+    )
 
 
 def ensure_public_domain(env_id: str, service_id: str, port: int) -> Optional[str]:
